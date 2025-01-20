@@ -4,9 +4,9 @@ A Model Context Protocol (MCP) server that provides access to prediction market 
 
 ## Features
 
-- Real-time prediction market data with current prices and trading volume
+- Real-time prediction market data with current prices and probabilities
 - Detailed market information including categories, resolution dates, and descriptions
-- Historical price and volume data with customizable timeframes
+- Historical price and volume data with customizable timeframes (1d, 7d, 30d, all)
 - Built-in error handling and rate limit management
 - Clean data formatting for easy consumption
 
@@ -36,8 +36,22 @@ A Model Context Protocol (MCP) server that provides access to prediction market 
 ```
 
 ### Running Locally
-After connecting Claude client with the MCP tool via json file, run the server:
-In polymarket-mcp repo: `uv run src/polymarket_mcp/server.py`
+1. Clone the repository and install dependencies:
+```bash
+git clone https://github.com/berlinbra/polymarket-mcp.git
+cd polymarket-mcp
+pip install -e .
+```
+
+2. Create a `.env` file with your PolyMarket API key:
+```
+POLYMARKET_API_KEY=your_api_key_here
+```
+
+3. Run the server:
+```bash
+python -m polymarket_mcp.server
+```
 
 ## Available Tools
 
@@ -54,22 +68,21 @@ The server implements four tools:
 {
     "market_id": {
         "type": "string",
-        "description": "Unique identifier for the prediction market"
+        "description": "Market ID or slug"
     }
 }
 ```
 
 **Example Response:**
 ```
-Market Information:
-
-Title: US Presidential Election 2024
+Title: Example Market
 Category: Politics
 Status: Open
-Resolution Date: 2024-11-05
+Resolution Date: 2024-12-31
 Volume: $1,234,567.89
 Liquidity: $98,765.43
-Description: Which party's nominee will win the 2024 US Presidential Election?
+Description: This is an example prediction market...
+---
 ```
 
 ### list-markets
@@ -79,20 +92,40 @@ Description: Which party's nominee will win the 2024 US Presidential Election?
 {
     "status": {
         "type": "string",
-        "description": "Market status filter (open, closed, resolved)",
-        "optional": true
+        "description": "Filter by market status",
+        "enum": ["open", "closed", "resolved"]
     },
     "limit": {
         "type": "integer",
-        "description": "Number of markets to return (1-100)",
-        "default": 10
+        "description": "Number of markets to return",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 100
     },
     "offset": {
         "type": "integer",
-        "description": "Pagination offset",
-        "default": 0
+        "description": "Number of markets to skip (for pagination)",
+        "default": 0,
+        "minimum": 0
     }
 }
+```
+
+**Example Response:**
+```
+Available Markets:
+
+ID: market-123
+Title: US Presidential Election 2024
+Status: Open
+Volume: $1,234,567.89
+---
+
+ID: market-124
+Title: Oscar Best Picture 2024
+Status: Open
+Volume: $234,567.89
+---
 ```
 
 ### get-market-prices
@@ -102,21 +135,24 @@ Description: Which party's nominee will win the 2024 US Presidential Election?
 {
     "market_id": {
         "type": "string",
-        "description": "Unique identifier for the prediction market"
+        "description": "Market ID or slug"
     }
 }
 ```
 
 **Example Response:**
 ```
-Current Market Prices:
+Current Market Prices for US Presidential Election 2024
 
-Market: US Presidential Election 2024
-Time: 2024-01-20 19:45:00 UTC
-Outcome A: $0.65 (Democratic)
-Outcome B: $0.35 (Republican)
-24h Volume: $234,567.89
-Liquidity: $98,765.43
+Outcome: Democratic
+Price: $0.6500
+Probability: 65.0%
+---
+
+Outcome: Republican
+Price: $0.3500
+Probability: 35.0%
+---
 ```
 
 ### get-market-history
@@ -126,34 +162,52 @@ Liquidity: $98,765.43
 {
     "market_id": {
         "type": "string",
-        "description": "Unique identifier for the prediction market"
+        "description": "Market ID or slug"
     },
     "timeframe": {
         "type": "string",
-        "description": "Time period for historical data (1d, 7d, 30d, all)",
+        "description": "Time period for historical data",
+        "enum": ["1d", "7d", "30d", "all"],
         "default": "7d"
     }
 }
+```
+
+**Example Response:**
+```
+Historical Data for US Presidential Election 2024
+Time Period: 7d
+
+Time: 2024-01-20T12:00:00Z
+Price: $0.6500
+Volume: $123,456.78
+---
+
+Time: 2024-01-19T12:00:00Z
+Price: $0.6300
+Volume: $98,765.43
+---
 ```
 
 ## Error Handling
 
 The server includes comprehensive error handling for various scenarios:
 
-- Invalid API keys
-- Rate limiting
+- Rate limiting (429 errors)
+- Invalid API keys (403 errors)
+- Invalid market IDs (404 errors)
 - Network connectivity issues
-- Invalid market IDs
-- Malformed requests
-- API timeout conditions
+- API timeout conditions (30-second timeout)
+- Malformed responses
 
 Error messages are returned in a clear, human-readable format.
 
 ## Prerequisites
 
-- Python 3.12 or higher
-- httpx
-- mcp
+- Python 3.9 or higher
+- httpx>=0.24.0
+- mcp-core
+- python-dotenv>=1.0.0
 
 ## Contributing
 
