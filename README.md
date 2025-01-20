@@ -1,102 +1,191 @@
 # PolyMarket MCP Server
 
-An MCP server implementation for interacting with the PolyMarket API. This server provides tools for fetching prediction market data, including market information, prices, and historical data.
+A Model Context Protocol (MCP) server that provides access to prediction market data through the PolyMarket API. This server implements a standardized interface for retrieving market information, prices, and historical data from prediction markets.
 
 ## Features
 
-- Get detailed information about specific prediction markets
-- List available prediction markets with filtering options
-- Get current prices and trading information
-- Fetch historical price and volume data
-- Proper error handling and rate limit management
+- Real-time prediction market data with current prices and probabilities
+- Detailed market information including categories, resolution dates, and descriptions
+- Historical price and volume data with customizable timeframes (1d, 7d, 30d, all)
+- Built-in error handling and rate limit management
 - Clean data formatting for easy consumption
 
 ## Installation
 
-1. Clone the repository:
+#### Claude Desktop
+- On MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
+- On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
+
+<summary>Development/Unpublished Servers Configuration</summary>
+
+```json
+    "mcpServers": {
+        "polymarket-mcp": {
+            "command": "uv",
+            "args": [
+            "--directory",
+            "/Users/{INSERT_USER}/YOUR/PATH/TO/polymarket-mcp",
+            "run",
+            "polymarket-mcp"
+            ],
+            "env": {
+                "POLYMARKET_API_KEY": "<insert api key>"
+            }
+        }
+    }
+```
+
+### Running Locally
+1. Clone the repository and install dependencies:
 ```bash
 git clone https://github.com/berlinbra/polymarket-mcp.git
 cd polymarket-mcp
-```
-
-2. Create a virtual environment and install dependencies:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
 pip install -e .
 ```
 
-3. Set up your environment variables:
-Create a `.env` file in the root directory with your PolyMarket API key:
+2. Create a `.env` file with your PolyMarket API key:
 ```
 POLYMARKET_API_KEY=your_api_key_here
 ```
 
-## Usage
-
-The server provides the following tools:
-
-### get-market-info
-Get detailed information about a specific prediction market:
-```json
-{
-    "market_id": "your-market-id"
-}
-```
-
-### list-markets
-List prediction markets with optional filters:
-```json
-{
-    "status": "open",  // optional: "open", "closed", or "resolved"
-    "limit": 10,       // optional: number of markets to return (1-100)
-    "offset": 0        // optional: pagination offset
-}
-```
-
-### get-market-prices
-Get current prices and trading information for a market:
-```json
-{
-    "market_id": "your-market-id"
-}
-```
-
-### get-market-history
-Get historical price and volume data for a market:
-```json
-{
-    "market_id": "your-market-id",
-    "timeframe": "7d"  // optional: "1d", "7d", "30d", or "all"
-}
-```
-
-## Running the Server
-
-The server can be run directly using Python:
-
+3. Run the server:
 ```bash
 python -m polymarket_mcp.server
 ```
 
-Or through the MCP client:
+## Available Tools
 
-```bash
-mcp run polymarket_predictions
+The server implements four tools:
+- `get-market-info`: Get detailed information about a specific prediction market
+- `list-markets`: List available prediction markets with filtering options
+- `get-market-prices`: Get current prices and trading information
+- `get-market-history`: Get historical price and volume data
+
+### get-market-info
+
+**Input Schema:**
+```json
+{
+    "market_id": {
+        "type": "string",
+        "description": "Market ID or slug"
+    }
+}
 ```
 
-## Response Formats
-
-All responses are formatted as clear text with relevant information. Here's an example of a market info response:
-
+**Example Response:**
 ```
 Title: Example Market
 Category: Politics
 Status: Open
-Resolution Date: 2025-12-31
+Resolution Date: 2024-12-31
 Volume: $1,234,567.89
 Liquidity: $98,765.43
 Description: This is an example prediction market...
+---
+```
+
+### list-markets
+
+**Input Schema:**
+```json
+{
+    "status": {
+        "type": "string",
+        "description": "Filter by market status",
+        "enum": ["open", "closed", "resolved"]
+    },
+    "limit": {
+        "type": "integer",
+        "description": "Number of markets to return",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 100
+    },
+    "offset": {
+        "type": "integer",
+        "description": "Number of markets to skip (for pagination)",
+        "default": 0,
+        "minimum": 0
+    }
+}
+```
+
+**Example Response:**
+```
+Available Markets:
+
+ID: market-123
+Title: US Presidential Election 2024
+Status: Open
+Volume: $1,234,567.89
+---
+
+ID: market-124
+Title: Oscar Best Picture 2024
+Status: Open
+Volume: $234,567.89
+---
+```
+
+### get-market-prices
+
+**Input Schema:**
+```json
+{
+    "market_id": {
+        "type": "string",
+        "description": "Market ID or slug"
+    }
+}
+```
+
+**Example Response:**
+```
+Current Market Prices for US Presidential Election 2024
+
+Outcome: Democratic
+Price: $0.6500
+Probability: 65.0%
+---
+
+Outcome: Republican
+Price: $0.3500
+Probability: 35.0%
+---
+```
+
+### get-market-history
+
+**Input Schema:**
+```json
+{
+    "market_id": {
+        "type": "string",
+        "description": "Market ID or slug"
+    },
+    "timeframe": {
+        "type": "string",
+        "description": "Time period for historical data",
+        "enum": ["1d", "7d", "30d", "all"],
+        "default": "7d"
+    }
+}
+```
+
+**Example Response:**
+```
+Historical Data for US Presidential Election 2024
+Time Period: 7d
+
+Time: 2024-01-20T12:00:00Z
+Price: $0.6500
+Volume: $123,456.78
+---
+
+Time: 2024-01-19T12:00:00Z
+Price: $0.6300
+Volume: $98,765.43
 ---
 ```
 
@@ -104,37 +193,22 @@ Description: This is an example prediction market...
 
 The server includes comprehensive error handling for various scenarios:
 
-- Invalid API keys
-- Rate limiting
+- Rate limiting (429 errors)
+- Invalid API keys (403 errors)
+- Invalid market IDs (404 errors)
 - Network connectivity issues
-- Invalid market IDs
-- Malformed requests
-- API timeout conditions
+- API timeout conditions (30-second timeout)
+- Malformed responses
 
-Each error is returned with a clear explanation of what went wrong and, where applicable, suggestions for resolution.
+Error messages are returned in a clear, human-readable format.
 
-## Development
+## Prerequisites
 
-For local development:
-
-1. Fork the repository
-2. Create a new branch for your feature
-3. Install development dependencies:
-```bash
-pip install -e ".[dev]"
-```
-4. Make your changes
-5. Submit a pull request
-
-## License
-
-MIT License. See LICENSE file for details.
+- Python 3.9 or higher
+- httpx>=0.24.0
+- mcp-core
+- python-dotenv>=1.0.0
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-## Acknowledgments
-
-- Built using the MCP (Machine Conversation Protocol) framework
-- Inspired by the Alpha Vantage MCP server architecture
