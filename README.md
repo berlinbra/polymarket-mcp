@@ -36,22 +36,9 @@ A Model Context Protocol (MCP) server that provides access to prediction market 
 ```
 
 ### Running Locally
-1. Clone the repository and install dependencies:
-```bash
-git clone https://github.com/berlinbra/polymarket-mcp.git
-cd polymarket-mcp
-pip install -e .
-```
+After connecting Claude client with the MCP tool via json file, run the server:
+In alpha-vantage-mcp repo: `uv run src/polymarket_mcp/server.py`
 
-2. Create a `.env` file with your PolyMarket API key:
-```
-POLYMARKET_API_KEY=your_api_key_here
-```
-
-3. Run the server:
-```bash
-python -m polymarket_mcp.server
-```
 
 ## Available Tools
 
