@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-POLYMARKET_BASE = "https://strapi-matic.poly.market/api"
+POLYMARKET_BASE = "https://gamma-api.polymarket.com"
 API_KEY = os.getenv('POLYMARKET_API_KEY')
 
 server = Server("polymarket_predictions")
@@ -46,7 +46,7 @@ async def handle_list_tools() -> list[types.Tool]:
                     "status": {
                         "type": "string",
                         "description": "Filter by market status (e.g., open, closed, resolved)",
-                        "enum": ["open", "closed", "resolved"],
+                        "enum": ["active", "resolved"],
                     },
                     "limit": {
                         "type": "integer",
@@ -107,7 +107,9 @@ async def make_polymarket_request(
     method: str = "GET"
 ) -> dict[str, Any] | str:
     """Make a request to the PolyMarket API with proper error handling."""
-    headers = {}
+    headers = {
+        'Accept': 'application/json'
+    }
     if API_KEY:
         headers["Authorization"] = f"Bearer {API_KEY}"
 
@@ -150,18 +152,17 @@ async def make_polymarket_request(
 def format_market_info(market_data: dict) -> str:
     """Format market information into a concise string."""
     try:
-        if not market_data or "data" not in market_data:
+        if not market_data or not market_data.get('question'):
             return "No market information available"
             
-        market = market_data["data"]
         return (
-            f"Title: {market.get('title', 'N/A')}\n"
-            f"Category: {market.get('category', 'N/A')}\n"
-            f"Status: {market.get('status', 'N/A')}\n"
-            f"Resolution Date: {market.get('resolutionDate', 'N/A')}\n"
-            f"Volume: ${market.get('volume', 0):,.2f}\n"
-            f"Liquidity: ${market.get('liquidity', 0):,.2f}\n"
-            f"Description: {market.get('description', 'N/A')}\n"
+            f"Title: {market_data.get('question', 'N/A')}\\n"
+            f"Category: {market_data.get('category', {}).get('name', 'N/A')}\\n"
+            f"Status: {'Resolved' if market_data.get('isResolved') else 'Active'}\\n"
+            f"Resolution Date: {market_data.get('resolutionTime', 'N/A')}\\n"
+            f"Volume: ${market_data.get('volume', 0):,.2f}\\n"
+            f"Liquidity: ${market_data.get('liquidity', 0):,.2f}\\n"
+            f"Description: {market_data.get('description', 'N/A')}\\n"
             "---"
         )
     except Exception as e:
@@ -170,74 +171,69 @@ def format_market_info(market_data: dict) -> str:
 def format_market_list(markets_data: dict) -> str:
     """Format list of markets into a concise string."""
     try:
-        if not markets_data or "data" not in markets_data:
+        markets = markets_data.get('markets', [])
+        if not markets:
             return "No markets available"
             
-        markets = markets_data["data"]
-        formatted_markets = ["Available Markets:\n"]
+        formatted_markets = ["Available Markets:\\n"]
         
         for market in markets:
             formatted_markets.append(
-                f"ID: {market.get('id', 'N/A')}\n"
-                f"Title: {market.get('title', 'N/A')}\n"
-                f"Status: {market.get('status', 'N/A')}\n"
-                f"Volume: ${market.get('volume', 0):,.2f}\n"
-                "---\n"
+                f"ID: {market.get('marketId', 'N/A')}\\n"
+                f"Title: {market.get('question', 'N/A')}\\n"
+                f"Status: {'Resolved' if market.get('isResolved') else 'Active'}\\n"
+                f"Volume: ${market.get('volume', 0):,.2f}\\n"
+                "---\\n"
             )
         
-        return "\n".join(formatted_markets)
+        return "\\n".join(formatted_markets)
     except Exception as e:
         return f"Error formatting markets list: {str(e)}"
 
 def format_market_prices(prices_data: dict) -> str:
     """Format market prices into a concise string."""
     try:
-        if not prices_data or "data" not in prices_data:
+        if not prices_data or not prices_data.get('outcomes'):
             return "No price information available"
             
-        prices = prices_data["data"]
-        outcomes = prices.get("outcomes", [])
-        
         formatted_prices = [
-            f"Current Market Prices for {prices.get('title', 'Unknown Market')}\n"
+            f"Current Market Prices for {prices_data.get('question', 'Unknown Market')}\\n"
         ]
         
-        for outcome in outcomes:
+        for outcome in prices_data.get('outcomes', []):
+            price = outcome.get('probability', 0)
             formatted_prices.append(
-                f"Outcome: {outcome.get('title', 'N/A')}\n"
-                f"Price: ${outcome.get('price', 0):,.4f}\n"
-                f"Probability: {outcome.get('probability', 0)*100:.1f}%\n"
-                "---\n"
+                f"Outcome: {outcome.get('value', 'N/A')}\\n"
+                f"Price: ${price:,.4f}\\n"
+                f"Probability: {price*100:.1f}%\\n"
+                "---\\n"
             )
         
-        return "\n".join(formatted_prices)
+        return "\\n".join(formatted_prices)
     except Exception as e:
         return f"Error formatting price data: {str(e)}"
 
 def format_market_history(history_data: dict) -> str:
     """Format market history data into a concise string."""
     try:
-        if not history_data or "data" not in history_data:
+        if not history_data or not history_data.get('series'):
             return "No historical data available"
             
-        history = history_data["data"]
-        points = history.get("priceHistory", [])
-        
         formatted_history = [
-            f"Historical Data for {history.get('title', 'Unknown Market')}\n"
-            f"Time Period: {history.get('timeframe', 'N/A')}\n\n"
+            f"Historical Data for {history_data.get('question', 'Unknown Market')}\\n"
+            f"Time Period: {history_data.get('timeframe', 'N/A')}\\n\\n"
         ]
         
         # Show the last 5 data points
-        for point in points[-5:]:
+        for point in history_data.get('series', [])[-5:]:
             formatted_history.append(
-                f"Time: {point.get('timestamp', 'N/A')}\n"
-                f"Price: ${point.get('price', 0):,.4f}\n"
-                f"Volume: ${point.get('volume', 0):,.2f}\n"
-                "---\n"
+                f"Time: {point.get('timestamp', 'N/A')}\\n"
+                f"Price: ${point.get('probability', 0):,.4f}\\n"
+                f"Volume: ${point.get('volume', 0):,.2f}\\n"
+                "---\\n"
             )
         
-        return "\n".join(formatted_history)
+        return "\\n".join(formatted_history)
     except Exception as e:
         return f"Error formatting historical data: {str(e)}"
 
@@ -260,7 +256,7 @@ async def handle_call_tool(
             
             market_data = await make_polymarket_request(
                 client,
-                f"markets/{market_id}"
+                f"market/{market_id}"
             )
 
             if isinstance(market_data, str):
@@ -276,7 +272,8 @@ async def handle_call_tool(
             
             params = {
                 "limit": limit,
-                "offset": offset
+                "offset": offset,
+                "sort": "volume"
             }
             if status:
                 params["status"] = status
@@ -300,7 +297,7 @@ async def handle_call_tool(
             
             prices_data = await make_polymarket_request(
                 client,
-                f"markets/{market_id}/prices"
+                f"market/{market_id}"
             )
 
             if isinstance(prices_data, str):
@@ -318,8 +315,8 @@ async def handle_call_tool(
             
             history_data = await make_polymarket_request(
                 client,
-                f"markets/{market_id}/history",
-                {"timeframe": timeframe}
+                f"market/{market_id}/time-series",
+                {"period": timeframe}
             )
 
             if isinstance(history_data, str):
