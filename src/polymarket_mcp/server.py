@@ -1,18 +1,25 @@
 from typing import Any
 import asyncio
-import httpx
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
 import os
 from dotenv import load_dotenv
+from py_clob_client.client import ClobClient
+from py_clob_client.objects import GetMarketRequest
+from eth_utils import to_checksum_address
 
 # Load environment variables
 load_dotenv()
 
-POLYMARKET_BASE = "https://strapi-matic.poly.market/api"
 API_KEY = os.getenv('POLYMARKET_API_KEY')
+if not API_KEY:
+    raise ValueError("POLYMARKET_API_KEY environment variable is required")
+
+# Initialize CLOB client
+NETWORK = os.getenv('NETWORK', 'mainnet')  # Default to mainnet if not specified
+clob_client = ClobClient(network=NETWORK, api_key=API_KEY)
 
 server = Server("polymarket_predictions")
 
@@ -31,7 +38,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (condition ID) or market address",
                     },
                 },
                 "required": ["market_id"],
@@ -39,70 +46,33 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
     ]
 
-async def make_polymarket_request(
-    client: httpx.AsyncClient,
-    endpoint: str,
-    params: dict = None,
-    method: str = "GET"
-) -> dict[str, Any] | str:
-    """Make a request to the PolyMarket API with proper error handling."""
-    headers = {}
-    if API_KEY:
-        headers["Authorization"] = f"Bearer {API_KEY}"
-
-    try:
-        if method == "GET":
-            response = await client.get(
-                f"{POLYMARKET_BASE}/{endpoint}",
-                params=params,
-                headers=headers,
-                timeout=30.0
-            )
-        else:
-            response = await client.post(
-                f"{POLYMARKET_BASE}/{endpoint}",
-                json=params,
-                headers=headers,
-                timeout=30.0
-            )
-        
-        # Check for specific error responses
-        if response.status_code == 429:
-            return "Rate limit exceeded. Please try again later."
-        elif response.status_code == 403:
-            return "API key invalid or expired."
-        elif response.status_code == 404:
-            return "Market or resource not found."
-        
-        response.raise_for_status()
-        return response.json()
-        
-    except httpx.TimeoutException:
-        return "Request timed out after 30 seconds. The PolyMarket API may be experiencing delays."
-    except httpx.ConnectError:
-        return "Failed to connect to PolyMarket API. Please check your internet connection."
-    except httpx.HTTPStatusError as e:
-        return f"HTTP error occurred: {str(e)} - Response: {e.response.text}"
-    except Exception as e:
-        return f"Unexpected error occurred: {str(e)}"
-
 def format_market_info(market_data: dict) -> str:
     """Format market information into a concise string."""
     try:
-        if not market_data or "data" not in market_data:
+        if not market_data:
             return "No market information available"
             
-        market = market_data["data"]
-        return (
-            f"Title: {market.get('title', 'N/A')}\n"
-            f"Category: {market.get('category', 'N/A')}\n"
-            f"Status: {market.get('status', 'N/A')}\n"
-            f"Resolution Date: {market.get('resolutionDate', 'N/A')}\n"
-            f"Volume: ${market.get('volume', 0):,.2f}\n"
-            f"Liquidity: ${market.get('liquidity', 0):,.2f}\n"
-            f"Description: {market.get('description', 'N/A')}\n"
-            "---"
-        )
+        # Convert Wei to ETH/USDC for amounts
+        volume = float(market_data.get('volume', 0)) / 1e6  # Assuming USDC decimals
+        liquidity = float(market_data.get('liquidity', 0)) / 1e6
+        
+        # Format the response
+        response = [
+            f"Title: {market_data.get('question', 'N/A')}",
+            f"Category: {market_data.get('category', 'N/A')}",
+            f"Status: {market_data.get('status', 'N/A')}",
+            f"Resolution Time: {market_data.get('resolutionTime', 'N/A')}",
+            f"Volume: ${volume:,.2f}",
+            f"Liquidity: ${liquidity:,.2f}",
+            "\nOutcomes:"
+        ]
+        
+        # Add outcomes information
+        for outcome in market_data.get('outcomes', []):
+            prob = float(outcome.get('prob', 0)) * 100
+            response.append(f"- {outcome.get('title', 'N/A')}: {prob:.1f}%")
+            
+        return "\n".join(response)
     except Exception as e:
         return f"Error formatting market data: {str(e)}"
 
@@ -117,25 +87,35 @@ async def handle_call_tool(
     if not arguments:
         return [types.TextContent(type="text", text="Missing arguments for the request")]
     
-    async with httpx.AsyncClient() as client:
-        if name == "get-market-info":
-            market_id = arguments.get("market_id")
-            if not market_id:
-                return [types.TextContent(type="text", text="Missing market_id parameter")]
+    if name == "get-market-info":
+        market_id = arguments.get("market_id")
+        if not market_id:
+            return [types.TextContent(type="text", text="Missing market_id parameter")]
+        
+        try:
+            # Try to format as an address first
+            try:
+                market_address = to_checksum_address(market_id)
+                request = GetMarketRequest(market_address=market_address)
+            except ValueError:
+                # If not a valid address, treat as a condition ID
+                request = GetMarketRequest(condition_id=market_id)
             
-            market_data = await make_polymarket_request(
-                client,
-                f"markets/{market_id}"
-            )
-
-            if isinstance(market_data, str):
-                return [types.TextContent(type="text", text=f"Error: {market_data}")]
-
+            market_data = await clob_client.get_market(request)
+            
+            if not market_data:
+                return [types.TextContent(type="text", text="Market not found")]
+            
             formatted_info = format_market_info(market_data)
             return [types.TextContent(type="text", text=formatted_info)]
             
-        else:
-            return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
+        except Exception as e:
+            error_msg = str(e)
+            if "not found" in error_msg.lower():
+                return [types.TextContent(type="text", text="Market not found")]
+            return [types.TextContent(type="text", text=f"Error fetching market data: {error_msg}")]
+    else:
+        return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
 async def main():
     """Main entry point for the MCP server."""
