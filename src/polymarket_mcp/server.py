@@ -6,8 +6,7 @@ from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
 import os
 from dotenv import load_dotenv
-from py_clob_client.client import ClobClient
-from py_clob_client.objects import GetMarketRequest
+from clob_client import ClobClient
 from eth_utils import to_checksum_address
 
 # Load environment variables
@@ -96,12 +95,10 @@ async def handle_call_tool(
             # Try to format as an address first
             try:
                 market_address = to_checksum_address(market_id)
-                request = GetMarketRequest(market_address=market_address)
+                market_data = await clob_client.get_market(market_address)
             except ValueError:
                 # If not a valid address, treat as a condition ID
-                request = GetMarketRequest(condition_id=market_id)
-            
-            market_data = await clob_client.get_market(request)
+                market_data = await clob_client.get_market_by_id(market_id)
             
             if not market_data:
                 return [types.TextContent(type="text", text="Market not found")]
