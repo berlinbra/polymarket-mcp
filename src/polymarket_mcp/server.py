@@ -156,37 +156,38 @@ def format_market_info(market_data: dict) -> str:
             return "No market information available"
             
         return (
-            f"Title: {market_data.get('question', 'N/A')}\\n"
-            f"Category: {market_data.get('category', {}).get('name', 'N/A')}\\n"
-            f"Status: {'Resolved' if market_data.get('isResolved') else 'Active'}\\n"
-            f"Resolution Date: {market_data.get('resolutionTime', 'N/A')}\\n"
-            f"Volume: ${market_data.get('volume', 0):,.2f}\\n"
-            f"Liquidity: ${market_data.get('liquidity', 0):,.2f}\\n"
-            f"Description: {market_data.get('description', 'N/A')}\\n"
+            f"Title: {market_data.get('question', 'N/A')}\n"
+            f"Category: {market_data.get('category', {}).get('name', 'N/A')}\n"
+            f"Status: {'Resolved' if market_data.get('isResolved') else 'Active'}\n"
+            f"Resolution Date: {market_data.get('resolutionTime', 'N/A')}\n"
+            f"Volume: ${market_data.get('volume', 0):,.2f}\n"
+            f"Liquidity: ${market_data.get('liquidity', 0):,.2f}\n"
+            f"Description: {market_data.get('description', 'N/A')}\n"
             "---"
         )
     except Exception as e:
         return f"Error formatting market data: {str(e)}"
 
-def format_market_list(markets_data: dict) -> str:
+def format_market_list(markets_data: dict | list) -> str:
     """Format list of markets into a concise string."""
     try:
-        markets = markets_data.get('markets', [])
+        # Handle both list and dict responses
+        markets = markets_data if isinstance(markets_data, list) else markets_data.get('markets', [])
         if not markets:
             return "No markets available"
             
-        formatted_markets = ["Available Markets:\\n"]
+        formatted_markets = ["Available Markets:\n"]
         
         for market in markets:
             formatted_markets.append(
-                f"ID: {market.get('marketId', 'N/A')}\\n"
-                f"Title: {market.get('question', 'N/A')}\\n"
-                f"Status: {'Resolved' if market.get('isResolved') else 'Active'}\\n"
-                f"Volume: ${market.get('volume', 0):,.2f}\\n"
-                "---\\n"
+                f"ID: {market.get('marketId', 'N/A')}\n"
+                f"Title: {market.get('question', 'N/A')}\n"
+                f"Status: {'Resolved' if market.get('isResolved') else 'Active'}\n"
+                f"Volume: ${market.get('volume', 0):,.2f}\n"
+                "---\n"
             )
         
-        return "\\n".join(formatted_markets)
+        return "\n".join(formatted_markets)
     except Exception as e:
         return f"Error formatting markets list: {str(e)}"
 
@@ -197,19 +198,19 @@ def format_market_prices(prices_data: dict) -> str:
             return "No price information available"
             
         formatted_prices = [
-            f"Current Market Prices for {prices_data.get('question', 'Unknown Market')}\\n"
+            f"Current Market Prices for {prices_data.get('question', 'Unknown Market')}\n"
         ]
         
         for outcome in prices_data.get('outcomes', []):
             price = outcome.get('probability', 0)
             formatted_prices.append(
-                f"Outcome: {outcome.get('value', 'N/A')}\\n"
-                f"Price: ${price:,.4f}\\n"
-                f"Probability: {price*100:.1f}%\\n"
-                "---\\n"
+                f"Outcome: {outcome.get('value', 'N/A')}\n"
+                f"Price: ${price:,.4f}\n"
+                f"Probability: {price*100:.1f}%\n"
+                "---\n"
             )
         
-        return "\\n".join(formatted_prices)
+        return "\n".join(formatted_prices)
     except Exception as e:
         return f"Error formatting price data: {str(e)}"
 
@@ -220,20 +221,20 @@ def format_market_history(history_data: dict) -> str:
             return "No historical data available"
             
         formatted_history = [
-            f"Historical Data for {history_data.get('question', 'Unknown Market')}\\n"
-            f"Time Period: {history_data.get('timeframe', 'N/A')}\\n\\n"
+            f"Historical Data for {history_data.get('question', 'Unknown Market')}\n"
+            f"Time Period: {history_data.get('timeframe', 'N/A')}\n\n"
         ]
         
         # Show the last 5 data points
         for point in history_data.get('series', [])[-5:]:
             formatted_history.append(
-                f"Time: {point.get('timestamp', 'N/A')}\\n"
-                f"Price: ${point.get('probability', 0):,.4f}\\n"
-                f"Volume: ${point.get('volume', 0):,.2f}\\n"
-                "---\\n"
+                f"Time: {point.get('timestamp', 'N/A')}\n"
+                f"Price: ${point.get('probability', 0):,.4f}\n"
+                f"Volume: ${point.get('volume', 0):,.2f}\n"
+                "---\n"
             )
         
-        return "\\n".join(formatted_history)
+        return "\n".join(formatted_history)
     except Exception as e:
         return f"Error formatting historical data: {str(e)}"
 
