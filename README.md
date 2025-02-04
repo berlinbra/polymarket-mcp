@@ -1,4 +1,5 @@
 # PolyMarket MCP Server
+[![smithery badge](https://smithery.ai/badge/polymarket_mcp)](https://smithery.ai/server/polymarket_mcp)
 
 A Model Context Protocol (MCP) server that provides access to prediction market data through the PolyMarket API. This server implements a standardized interface for retrieving market information, prices, and historical data from prediction markets.
 
@@ -11,6 +12,14 @@ A Model Context Protocol (MCP) server that provides access to prediction market 
 - Clean data formatting for easy consumption
 
 ## Installation
+
+#### Installing via Smithery
+
+To install PolyMarket Predictions for Claude Desktop automatically via [Smithery](https://smithery.ai/server/polymarket_mcp):
+
+```bash
+npx -y @smithery/cli install polymarket_mcp --client claude
+```
 
 #### Claude Desktop
 - On MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`

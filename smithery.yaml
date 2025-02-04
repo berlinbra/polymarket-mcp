@@ -1,0 +1,17 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - polymarketApiKey
+    properties:
+      polymarketApiKey:
+        type: string
+        description: The API key for accessing the PolyMarket API.
+  commandFunction:
+    # A function that produces the CLI command to start the MCP on stdio.
+    |-
+    (config) => ({ command: 'python', args: ['src/polymarket_mcp/server.py'], env: { POLYMARKET_API_KEY: config.polymarketApiKey } })
