@@ -1,6 +1,7 @@
 from typing import Any
 import asyncio
 import httpx
+import json
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
@@ -238,11 +239,25 @@ async def handle_call_tool(
             # Get markets using CLOB client
             markets_data = client.get_markets()
             
+            # Handle string response (if the response is a JSON string)
+            if isinstance(markets_data, str):
+                try:
+                    markets_data = json.loads(markets_data)
+                except json.JSONDecodeError:
+                    return [types.TextContent(type="text", text="Error: Invalid response format from API")]
+            
+            # Ensure we have a list of markets
+            if not isinstance(markets_data, list):
+                if isinstance(markets_data, dict) and 'markets' in markets_data:
+                    markets_data = markets_data['markets']
+                else:
+                    return [types.TextContent(type="text", text="Error: Unexpected response format from API")]
+            
             # Filter by status if specified
             if status:
                 markets_data = [
                     market for market in markets_data 
-                    if market.get('status', '').lower() == status.lower()
+                    if isinstance(market, dict) and market.get('status', '').lower() == status.lower()
                 ]
             
             # Apply pagination
