@@ -35,7 +35,7 @@ npx -y @smithery/cli install polymarket_mcp --client claude
             "--directory",
             "/Users/{INSERT_USER}/YOUR/PATH/TO/polymarket-mcp",
             "run",
-            "polymarket-mcp"
+            "polymarket-mcp" //or src/polymarket_mcp/server.py
             ],
             "env": {
                 "POLYMARKET_API_KEY": "<insert api key>"
