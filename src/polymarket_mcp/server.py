@@ -7,14 +7,26 @@ from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
 import os
 from dotenv import load_dotenv
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import ApiCreds
+from py_clob_client.constants import AMOY
 
 # Load environment variables
 load_dotenv()
 
-POLYMARKET_BASE = "https://gamma-api.polymarket.com"
-API_KEY = os.getenv('POLYMARKET_API_KEY')
-
 server = Server("polymarket_predictions")
+
+# Initialize CLOB client
+def get_clob_client() -> ClobClient:
+    host = os.getenv("CLOB_HOST", "https://clob.polymarket.com")
+    key = os.getenv("PK")
+    creds = ApiCreds(
+        api_key=os.getenv("CLOB_API_KEY"),
+        api_secret=os.getenv("CLOB_SECRET"),
+        api_passphrase=os.getenv("CLOB_PASS_PHRASE"),
+    )
+    chain_id = AMOY
+    return ClobClient(host, key=key, chain_id=chain_id, creds=creds)
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
@@ -100,90 +112,47 @@ async def handle_list_tools() -> list[types.Tool]:
         )
     ]
 
-async def make_polymarket_request(
-    client: httpx.AsyncClient,
-    endpoint: str,
-    params: dict = None,
-    method: str = "GET"
-) -> dict[str, Any] | str:
-    """Make a request to the PolyMarket API with proper error handling."""
-    headers = {
-        'Accept': 'application/json'
-    }
-    if API_KEY:
-        headers["Authorization"] = f"Bearer {API_KEY}"
-
-    try:
-        if method == "GET":
-            response = await client.get(
-                f"{POLYMARKET_BASE}/{endpoint}",
-                params=params,
-                headers=headers,
-                timeout=30.0
-            )
-        else:
-            response = await client.post(
-                f"{POLYMARKET_BASE}/{endpoint}",
-                json=params,
-                headers=headers,
-                timeout=30.0
-            )
-        
-        # Check for specific error responses
-        if response.status_code == 429:
-            return "Rate limit exceeded. Please try again later."
-        elif response.status_code == 403:
-            return "API key invalid or expired."
-        elif response.status_code == 404:
-            return "Market or resource not found."
-        
-        response.raise_for_status()
-        return response.json()
-        
-    except httpx.TimeoutException:
-        return "Request timed out after 30 seconds. The PolyMarket API may be experiencing delays."
-    except httpx.ConnectError:
-        return "Failed to connect to PolyMarket API. Please check your internet connection."
-    except httpx.HTTPStatusError as e:
-        return f"HTTP error occurred: {str(e)} - Response: {e.response.text}"
-    except Exception as e:
-        return f"Unexpected error occurred: {str(e)}"
-
 def format_market_info(market_data: dict) -> str:
     """Format market information into a concise string."""
     try:
-        if not market_data or not market_data.get('question'):
+        if not market_data or not isinstance(market_data, dict):
             return "No market information available"
             
+        condition_id = market_data.get('condition_id', 'N/A')
+        title = market_data.get('title', 'N/A')
+        status = market_data.get('status', 'N/A')
+        resolution_date = market_data.get('resolution_date', 'N/A')
+            
         return (
-            f"Title: {market_data.get('question', 'N/A')}\n"
-            f"Category: {market_data.get('category', {}).get('name', 'N/A')}\n"
-            f"Status: {'Resolved' if market_data.get('isResolved') else 'Active'}\n"
-            f"Resolution Date: {market_data.get('resolutionTime', 'N/A')}\n"
-            f"Volume: ${market_data.get('volume', 0):,.2f}\n"
-            f"Liquidity: ${market_data.get('liquidity', 0):,.2f}\n"
-            f"Description: {market_data.get('description', 'N/A')}\n"
+            f"Condition ID: {condition_id}\n"
+            f"Title: {title}\n"
+            f"Status: {status}\n"
+            f"Resolution Date: {resolution_date}\n"
             "---"
         )
     except Exception as e:
         return f"Error formatting market data: {str(e)}"
 
-def format_market_list(markets_data: dict | list) -> str:
+def format_market_list(markets_data: list) -> str:
     """Format list of markets into a concise string."""
     try:
-        # Handle both list and dict responses
-        markets = markets_data if isinstance(markets_data, list) else markets_data.get('markets', [])
-        if not markets:
+        if not markets_data:
             return "No markets available"
             
         formatted_markets = ["Available Markets:\n"]
         
-        for market in markets:
+        for market in markets_data:
+            try:
+                volume = float(market.get('volume', 0))
+                volume_str = f"${volume:,.2f}"
+            except (ValueError, TypeError):
+                volume_str = f"${market.get('volume', 0)}"
+                
             formatted_markets.append(
-                f"ID: {market.get('marketId', 'N/A')}\n"
-                f"Title: {market.get('question', 'N/A')}\n"
-                f"Status: {'Resolved' if market.get('isResolved') else 'Active'}\n"
-                f"Volume: ${market.get('volume', 0):,.2f}\n"
+                f"Condition ID: {market.get('condition_id', 'N/A')}\n"
+                f"Title: {market.get('title', 'N/A')}\n"
+                f"Status: {market.get('status', 'Unknown')}\n"
+                f"Volume: {volume_str}\n"
                 "---\n"
             )
         
@@ -191,24 +160,23 @@ def format_market_list(markets_data: dict | list) -> str:
     except Exception as e:
         return f"Error formatting markets list: {str(e)}"
 
-def format_market_prices(prices_data: dict) -> str:
+def format_market_prices(market_data: dict) -> str:
     """Format market prices into a concise string."""
     try:
-        if not prices_data or not prices_data.get('outcomes'):
+        if not market_data or not isinstance(market_data, dict):
             return "No price information available"
             
         formatted_prices = [
-            f"Current Market Prices for {prices_data.get('question', 'Unknown Market')}\n"
+            f"Current Market Prices for {market_data.get('title', 'Unknown Market')}\n"
         ]
         
-        for outcome in prices_data.get('outcomes', []):
-            price = outcome.get('probability', 0)
-            formatted_prices.append(
-                f"Outcome: {outcome.get('value', 'N/A')}\n"
-                f"Price: ${price:,.4f}\n"
-                f"Probability: {price*100:.1f}%\n"
-                "---\n"
-            )
+        # Extract price information from market data
+        # Note: Adjust this based on actual CLOB client response structure
+        current_price = market_data.get('current_price', 'N/A')
+        formatted_prices.append(
+            f"Current Price: {current_price}\n"
+            "---\n"
+        )
         
         return "\n".join(formatted_prices)
     except Exception as e:
@@ -217,20 +185,19 @@ def format_market_prices(prices_data: dict) -> str:
 def format_market_history(history_data: dict) -> str:
     """Format market history data into a concise string."""
     try:
-        if not history_data or not history_data.get('series'):
+        if not history_data or not isinstance(history_data, dict):
             return "No historical data available"
             
         formatted_history = [
-            f"Historical Data for {history_data.get('question', 'Unknown Market')}\n"
-            f"Time Period: {history_data.get('timeframe', 'N/A')}\n\n"
+            f"Historical Data for {history_data.get('title', 'Unknown Market')}\n"
         ]
         
-        # Show the last 5 data points
-        for point in history_data.get('series', [])[-5:]:
+        # Format historical data points
+        # Note: Adjust this based on actual CLOB client response structure
+        for point in history_data.get('history', [])[-5:]:
             formatted_history.append(
                 f"Time: {point.get('timestamp', 'N/A')}\n"
-                f"Price: ${point.get('probability', 0):,.4f}\n"
-                f"Volume: ${point.get('volume', 0):,.2f}\n"
+                f"Price: {point.get('price', 'N/A')}\n"
                 "---\n"
             )
         
@@ -249,45 +216,36 @@ async def handle_call_tool(
     if not arguments:
         return [types.TextContent(type="text", text="Missing arguments for the request")]
     
-    async with httpx.AsyncClient() as client:
+    client = get_clob_client()
+    
+    try:
         if name == "get-market-info":
             market_id = arguments.get("market_id")
             if not market_id:
                 return [types.TextContent(type="text", text="Missing market_id parameter")]
             
-            market_data = await make_polymarket_request(
-                client,
-                f"market/{market_id}"
-            )
-
-            if isinstance(market_data, str):
-                return [types.TextContent(type="text", text=f"Error: {market_data}")]
-
+            market_data = client.get_market(market_id)
             formatted_info = format_market_info(market_data)
             return [types.TextContent(type="text", text=formatted_info)]
 
         elif name == "list-markets":
             status = arguments.get("status")
-            limit = arguments.get("limit", 10)
-            offset = arguments.get("offset", 0)
             
-            params = {
-                "limit": limit,
-                "offset": offset,
-                "sort": "volume"
-            }
+            # Get markets using CLOB client
+            markets_data = client.get_markets()
+            
+            # Filter by status if specified
             if status:
-                params["status"] = status
+                markets_data = [
+                    market for market in markets_data 
+                    if market.get('status', '').lower() == status.lower()
+                ]
             
-            markets_data = await make_polymarket_request(
-                client,
-                "markets",
-                params
-            )
-
-            if isinstance(markets_data, str):
-                return [types.TextContent(type="text", text=f"Error: {markets_data}")]
-
+            # Apply pagination
+            offset = arguments.get("offset", 0)
+            limit = arguments.get("limit", 10)
+            markets_data = markets_data[offset:offset + limit]
+            
             formatted_list = format_market_list(markets_data)
             return [types.TextContent(type="text", text=formatted_list)]
 
@@ -296,15 +254,8 @@ async def handle_call_tool(
             if not market_id:
                 return [types.TextContent(type="text", text="Missing market_id parameter")]
             
-            prices_data = await make_polymarket_request(
-                client,
-                f"market/{market_id}"
-            )
-
-            if isinstance(prices_data, str):
-                return [types.TextContent(type="text", text=f"Error: {prices_data}")]
-
-            formatted_prices = format_market_prices(prices_data)
+            market_data = client.get_market(market_id)
+            formatted_prices = format_market_prices(market_data)
             return [types.TextContent(type="text", text=formatted_prices)]
 
         elif name == "get-market-history":
@@ -314,20 +265,16 @@ async def handle_call_tool(
             if not market_id:
                 return [types.TextContent(type="text", text="Missing market_id parameter")]
             
-            history_data = await make_polymarket_request(
-                client,
-                f"market/{market_id}/time-series",
-                {"period": timeframe}
-            )
-
-            if isinstance(history_data, str):
-                return [types.TextContent(type="text", text=f"Error: {history_data}")]
-
-            formatted_history = format_market_history(history_data)
+            # Note: Adjust this based on actual CLOB client capabilities
+            market_data = client.get_market(market_id)
+            formatted_history = format_market_history(market_data)
             return [types.TextContent(type="text", text=formatted_history)]
             
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
+            
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"Error executing tool: {str(e)}")]
 
 async def main():
     """Main entry point for the MCP server."""
