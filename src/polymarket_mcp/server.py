@@ -17,19 +17,22 @@ load_dotenv()
 
 server = Server("polymarket_predictions")
 
+
 # Initialize CLOB client
 def get_clob_client() -> ClobClient:
     host = os.getenv("CLOB_HOST", "https://clob.polymarket.com")
     key = os.getenv("KEY")  # Private key exported from polymarket UI
     funder = os.getenv("FUNDER")  # Funder address from polymarket UI
+    chain_id = POLYGON
     
-    client = ClobClient(
-        host,
-        key=key,
-        chain_id=POLYGON,
-        funder=funder,
-        signature_type=1,
-    )
+    # client = ClobClient(
+    #     host,
+    #     key=key,
+    #     chain_id=POLYGON,
+    #     funder=funder,
+    #     signature_type=1,
+    # )
+    client = ClobClient(host, key=key, chain_id=chain_id)
     client.set_api_creds(client.create_or_derive_api_creds())
     return client
 
