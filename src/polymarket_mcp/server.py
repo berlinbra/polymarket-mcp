@@ -239,69 +239,34 @@ async def handle_call_tool(
             # Get markets using CLOB client
             markets_data = client.get_markets()
             
-            # Debug logging of raw response
-            debug_info = [
-                "=== DEBUG: Raw Markets Response Format ===",
-                f"Type: {type(markets_data)}",
-                "Raw Content:",
-                str(markets_data)
-            ]
-            
             # Handle string response (if the response is a JSON string)
             if isinstance(markets_data, str):
                 try:
                     markets_data = json.loads(markets_data)
-                    debug_info.extend([
-                        "=== After JSON parsing ===",
-                        f"Type: {type(markets_data)}",
-                        "Parsed Structure:",
-                        json.dumps(markets_data, indent=2)
-                    ])
-                except json.JSONDecodeError as e:
-                    debug_info.append(f"JSON Parse Error: {str(e)}")
-                    return [types.TextContent(type="text", text="\n".join(debug_info))]
+                except json.JSONDecodeError:
+                    return [types.TextContent(type="text", text="Error: Invalid response format from API")]
             
-            # Log the structure after potential JSON parsing
-            debug_info.extend([
-                "=== Final Data Structure ===",
-                f"Type: {type(markets_data)}"
-            ])
-            
-            if isinstance(markets_data, dict):
-                debug_info.extend([
-                    "Available keys:",
-                    str(list(markets_data.keys()))
-                ])
-                if 'markets' in markets_data:
+            # Ensure we have a list of markets
+            if not isinstance(markets_data, list):
+                if isinstance(markets_data, dict) and 'markets' in markets_data:
                     markets_data = markets_data['markets']
-                    debug_info.append("Extracted markets list from dictionary")
-            
-            if isinstance(markets_data, list):
-                debug_info.extend([
-                    f"List length: {len(markets_data)}",
-                    "First item structure (if exists):",
-                    json.dumps(markets_data[0], indent=2) if markets_data else "N/A"
-                ])
+                else:
+                    return [types.TextContent(type="text", text="Error: Unexpected response format from API")]
             
             # Filter by status if specified
             if status:
-                original_count = len(markets_data)
                 markets_data = [
                     market for market in markets_data 
                     if isinstance(market, dict) and market.get('status', '').lower() == status.lower()
                 ]
-                debug_info.append(f"Filtered by status '{status}': {original_count} -> {len(markets_data)} markets")
             
             # Apply pagination
             offset = arguments.get("offset", 0)
             limit = arguments.get("limit", 10)
             markets_data = markets_data[offset:offset + limit]
-            debug_info.append(f"Applied pagination: offset={offset}, limit={limit}, returned {len(markets_data)} markets")
             
             formatted_list = format_market_list(markets_data)
-            
-            # Return both debug info and formatted list
-            return [types.TextContent(type="text", text="\n".join(debug_info + ["", "=== FORMATTED OUTPUT ===", formatted_list]))]
+            return [types.TextContent(type="text", text=formatted_list)]
 
         elif name == "get-market-prices":
             market_id = arguments.get("market_id")
