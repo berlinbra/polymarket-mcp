@@ -6,13 +6,13 @@ build-backend = "hatchling.build"
 name = "polymarket_mcp"
 version = "0.1.0"
 description = "MCP Server for PolyMarket API"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-    "mcp-core",
+    "mcp>=0.1.0",
     "httpx>=0.24.0",
     "python-dotenv>=1.0.0",
     "py-clob-client"
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/polymarket_mcp"]
+[project.scripts]
+polymarket-mcp = "polymarket_mcp:main"
