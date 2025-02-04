@@ -10,7 +10,8 @@ requires-python = ">=3.9"
 dependencies = [
     "mcp-core",
     "httpx>=0.24.0",
-    "python-dotenv>=1.0.0"
+    "python-dotenv>=1.0.0",
+    "py-clob-client"
 ]
 
 [tool.hatch.build.targets.wheel]
