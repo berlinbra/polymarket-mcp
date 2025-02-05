@@ -57,27 +57,21 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="list-markets",
-            description="Get a list of prediction markets with optional filters",
+            description="Get available CLOB markets (paginated). Returns market objects with detailed information including condition ID, question ID, token pairs, rewards data, market details, and status.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "status": {
+                    "next_cursor": {
                         "type": "string",
-                        "description": "Filter by market status (e.g., open, closed, resolved)",
-                        "enum": ["active", "resolved"],
+                        "description": "Cursor to start with, used for traversing paginated response. Empty ('') means the beginning",
+                        "default": ""
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Number of markets to return (default: 10)",
+                        "description": "Limit of results on a single page",
                         "default": 10,
                         "minimum": 1,
                         "maximum": 100
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Number of markets to skip (for pagination)",
-                        "default": 0,
-                        "minimum": 0
                     }
                 },
             },
@@ -247,10 +241,10 @@ async def handle_call_tool(
             return [types.TextContent(type="text", text=formatted_info)]
 
         elif name == "list-markets":
-            status = arguments.get("status")
+            next_cursor = arguments.get("next_cursor", "")
             
-            # Get markets using CLOB client
-            markets_data = client.get_markets()
+            # Get markets using CLOB client with cursor
+            markets_data = client.get_markets(next_cursor=next_cursor)
 
             # Handle string response (if the response is a JSON string)
             if isinstance(markets_data, str):
@@ -266,17 +260,9 @@ async def handle_call_tool(
                 else:
                     return [types.TextContent(type="text", text="Error: Unexpected response format from API")]
             
-            # Filter by status if specified
-            if status:
-                markets_data = [
-                    market for market in markets_data 
-                    if isinstance(market, dict) and market.get('status', '').lower() == status.lower()
-                ]
-            
-            # Apply pagination
-            offset = arguments.get("offset", 0)
+            # Apply limit
             limit = arguments.get("limit", 10)
-            markets_data = markets_data[offset:offset + limit]
+            markets_data = markets_data[:limit]
             
             formatted_list = format_market_list(markets_data)
             return [types.TextContent(type="text", text=formatted_list)]
