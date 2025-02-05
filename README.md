@@ -29,7 +29,8 @@ A Model Context Protocol (MCP) server that provides access to prediction market 
             "polymarket-mcp"
             ],
             "env": {
-                "POLYMARKET_API_KEY": "<insert api key>"
+                "KEY": "<insert poly market api key>",
+                "FUNDER": "<insert polymarket wallet address"
             }
         }
     }
