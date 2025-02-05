@@ -29,6 +29,7 @@ def get_clob_client() -> ClobClient:
         key=key,
         chain_id=POLYGON,
         funder=funder,
+        signature_type=1,
     )
     client.set_api_creds(client.create_or_derive_api_creds())
     return client
@@ -169,7 +170,7 @@ def format_market_prices(market_data: dict) -> str:
     """Format market prices into a concise string."""
     try:
         if not market_data or not isinstance(market_data, dict):
-            return "No price information available"
+            return market_data
             
         formatted_prices = [
             f"Current Market Prices for {market_data.get('title', 'Unknown Market')}\n"
@@ -238,7 +239,7 @@ async def handle_call_tool(
             
             # Get markets using CLOB client
             markets_data = client.get_markets()
-            
+
             # Handle string response (if the response is a JSON string)
             if isinstance(markets_data, str):
                 try:
@@ -248,8 +249,8 @@ async def handle_call_tool(
             
             # Ensure we have a list of markets
             if not isinstance(markets_data, list):
-                if isinstance(markets_data, dict) and 'markets' in markets_data:
-                    markets_data = markets_data['markets']
+                if isinstance(markets_data, dict) and 'data' in markets_data:
+                    markets_data = markets_data['data']
                 else:
                     return [types.TextContent(type="text", text="Error: Unexpected response format from API")]
             
