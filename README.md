@@ -38,13 +38,41 @@ npx -y @smithery/cli install polymarket_mcp --client claude
             "polymarket-mcp" //or src/polymarket_mcp/server.py
             ],
             "env": {
-                "POLYMARKET_API_KEY": "<insert api key>"
+                "KEY": "<insert poly market api key>",
+                "FUNDER": "<insert polymarket wallet address"
             }
         }
     }
 ```
 
 ### Running Locally
+1. Clone the repository and install dependencies:
+
+#### Install Libraries
+```
+uv pip install -e .
+```
+
+### Running 
+After connecting Claude client with the MCP tool via json file and installing the packages, Claude should see the server's mcp tools:
+
+You can run the sever yourself via:
+In polymarket-mcp repo: 
+```
+uv run src/polymarket_mcp/server.py
+```
+
+*if you want to run the server inspector along with the server: 
+```
+npx @modelcontextprotocol/inspector uv --directory C:\\Users\\{INSERT_USER}\\YOUR\\PATH\\TO\\polymarket-mcp run src/polymarket_mcp/server.py
+```
+
+2. Create a `.env` file with your PolyMarket API key:
+```
+Key=your_api_key_here
+Funder=poly market wallet address
+```
+
 After connecting Claude client with the MCP tool via json file, run the server:
 In alpha-vantage-mcp repo: `uv run src/polymarket_mcp/server.py`
 

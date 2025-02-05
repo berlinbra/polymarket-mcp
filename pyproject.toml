@@ -8,8 +8,10 @@ version = "0.1.0"
 description = "MCP Server for PolyMarket API"
 requires-python = ">=3.10"
 dependencies = [
-    "httpx>=0.28.1",
-    "mcp>=1.1.2",
+    "mcp>=0.1.0",
+    "httpx>=0.24.0",
+    "python-dotenv>=1.0.0",
+    "py-clob-client"
 ]
 
 [project.scripts]
