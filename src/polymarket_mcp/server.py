@@ -156,8 +156,20 @@ def format_market_list(markets_data: list) -> str:
                 
             formatted_markets.append(
                 f"Condition ID: {market.get('condition_id', 'N/A')}\n"
-                f"Title: {market.get('title', 'N/A')}\n"
-                f"Status: {market.get('status', 'Unknown')}\n"
+                f"Description: {market.get('description', 'N/A')}\n"
+                f"Category: {market.get('category', 'N/A')}\n"
+                f"Tokens: {market.get('question', 'N/A')}\n"
+                f"Question: {market.get('active', 'N/A')}\n"
+                f"Rewards: {market.get('rewards', 'N/A')}\n"
+                f"Active: {market.get('active', 'N/A')}\n"
+                f"Closed: {market.get('closed', 'N/A')}\n"
+                f"Slug: {market.get('market_slug', 'N/A')}\n"
+                f"Min Incentive size: {market.get('min_incentive_size', 'N/A')}\n"
+                f"Max Incentive size: {market.get('max_incentive_spread', 'N/A')}\n"
+                f"End date: {market.get('end_date_iso', 'N/A')}\n"
+                f"Start time: {market.get('game_start_time', 'N/A')}\n"
+                f"Min order size: {market.get('minimum_order_size', 'N/A')}\n"
+                f"Max tick size: {market.get('minimum_tick_size', 'N/A')}\n"
                 f"Volume: {volume_str}\n"
                 "---\n"
             )
