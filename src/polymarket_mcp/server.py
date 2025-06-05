@@ -2,12 +2,24 @@ from typing import Any
 import asyncio
 import httpx
 import json
+import sys
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
 import os
 from dotenv import load_dotenv
+
+# Redirect all print statements to stderr to avoid breaking JSON-RPC protocol
+import builtins
+original_print = builtins.print
+def safe_print(*args, **kwargs):
+    """Override print to always use stderr"""
+    kwargs['file'] = sys.stderr
+    original_print(*args, **kwargs)
+builtins.print = safe_print
+
+# Now we can safely import libraries that might print to stdout
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs
 from py_clob_client.constants import POLYGON
@@ -17,22 +29,43 @@ load_dotenv()
 
 server = Server("polymarket_predictions")
 
-# Initialize CLOB client
+# Gamma API endpoint
+GAMMA_API_URL = "https://gamma-api.polymarket.com"
+
+# Reduce timeout to prevent Claude from timing out first
+TIMEOUT_SECONDS = 10.0  # Reduced from 30.0
+
+# Initialize CLOB client (still needed for trading operations)
 def get_clob_client() -> ClobClient:
-    host = os.getenv("CLOB_HOST", "https://clob.polymarket.com")
-    key = os.getenv("KEY")  # Private key exported from polymarket UI
-    funder = os.getenv("FUNDER")  # Funder address from polymarket UI
-    chain_id = POLYGON
-    
-    client = ClobClient(
-        host,
-        key=key,
-        chain_id=POLYGON,
-        funder=funder,
-        signature_type=1,
-    )
-    client.set_api_creds(client.create_or_derive_api_creds())
-    return client
+    try:
+        host = os.getenv("CLOB_HOST", "https://clob.polymarket.com")
+        key = os.getenv("KEY", "dummy_key")  # Use dummy key if not provided
+        funder = os.getenv("FUNDER", "0x0000000000000000000000000000000000000000")  # Use dummy address if not provided
+        chain_id = POLYGON
+        
+        # Suppress any output from CLOB client initialization
+        import io
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        
+        try:
+            client = ClobClient(
+                host,
+                key=key,
+                chain_id=POLYGON,
+                funder=funder,
+                signature_type=1,
+            )
+            # Only try to set API creds if we have a real key
+            if key != "dummy_key":
+                client.set_api_creds(client.create_or_derive_api_creds())
+        finally:
+            sys.stdout = old_stdout
+            
+        return client
+    except Exception as e:
+        print(f"[DEBUG] CLOB client initialization failed: {e}", file=sys.stderr)
+        return None
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
@@ -49,7 +82,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug, e.g. '12' or 'will-bitcoin-reach-100k')",
                     },
                 },
                 "required": ["market_id"],
@@ -61,10 +94,15 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "status": {
-                        "type": "string",
-                        "description": "Filter by market status (e.g., open, closed, resolved)",
-                        "enum": ["active", "resolved"],
+                    "active": {
+                        "type": "boolean",
+                        "description": "Filter by active markets",
+                        "default": True,
+                    },
+                    "closed": {
+                        "type": "boolean",
+                        "description": "Filter by closed markets",
+                        "default": False,
                     },
                     "limit": {
                         "type": "integer",
@@ -78,6 +116,12 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Number of markets to skip (for pagination)",
                         "default": 0,
                         "minimum": 0
+                    },
+                    "order": {
+                        "type": "string",
+                        "description": "Sort order",
+                        "enum": ["asc", "desc"],
+                        "default": "desc"
                     }
                 },
             },
@@ -90,7 +134,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug)",
                     },
                 },
                 "required": ["market_id"],
@@ -104,7 +148,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug)",
                     },
                     "timeframe": {
                         "type": "string",
@@ -124,16 +168,41 @@ def format_market_info(market_data: dict) -> str:
         if not market_data or not isinstance(market_data, dict):
             return "No market information available"
             
-        condition_id = market_data.get('condition_id', 'N/A')
-        title = market_data.get('title', 'N/A')
-        status = market_data.get('status', 'N/A')
-        resolution_date = market_data.get('resolution_date', 'N/A')
-            
+        # Store both IDs for reference
+        numeric_id = market_data.get('id', 'N/A')
+        condition_id = market_data.get('conditionId', 'N/A')
+        title = market_data.get('title', market_data.get('question', 'N/A'))
+        status = "Active" if market_data.get('active', False) else "Closed" if market_data.get('closed', False) else "Unknown"
+        end_date = market_data.get('endDate', market_data.get('endDateIso', 'N/A'))
+        volume = market_data.get('volume', 0)
+        liquidity = market_data.get('liquidity', 0)
+        
+        # Format outcomes with current prices
+        outcomes_str = ""
+        outcomes = market_data.get('outcomes', [])
+        outcome_prices = market_data.get('outcomePrices', [])
+        
+        if isinstance(outcome_prices, str):
+            try:
+                outcome_prices = json.loads(outcome_prices)
+            except:
+                outcome_prices = []
+                
+        if outcomes and outcome_prices and len(outcomes) == len(outcome_prices):
+            outcomes_str = "\nOutcomes:\n"
+            for i, outcome in enumerate(outcomes):
+                price = float(outcome_prices[i]) if i < len(outcome_prices) else 0
+                outcomes_str += f"  - {outcome}: ${price:.2f} ({price*100:.1f}%)\n"
+        
         return (
+            f"Market ID: {numeric_id}\n"
             f"Condition ID: {condition_id}\n"
             f"Title: {title}\n"
             f"Status: {status}\n"
-            f"Resolution Date: {resolution_date}\n"
+            f"End Date: {end_date}\n"
+            f"Volume: ${volume:,.2f}\n"
+            f"Liquidity: ${liquidity:,.2f}"
+            f"{outcomes_str}\n"
             "---"
         )
     except Exception as e:
@@ -154,23 +223,14 @@ def format_market_list(markets_data: list) -> str:
             except (ValueError, TypeError):
                 volume_str = f"${market.get('volume', 0)}"
                 
+            status = "Active" if market.get('active', False) else "Closed" if market.get('closed', False) else "Unknown"
+            
             formatted_markets.append(
-                f"Condition ID: {market.get('condition_id', 'N/A')}\n"
-                f"Description: {market.get('description', 'N/A')}\n"
-                f"Category: {market.get('category', 'N/A')}\n"
-                f"Tokens: {market.get('question', 'N/A')}\n"
-                f"Question: {market.get('active', 'N/A')}\n"
-                f"Rewards: {market.get('rewards', 'N/A')}\n"
-                f"Active: {market.get('active', 'N/A')}\n"
-                f"Closed: {market.get('closed', 'N/A')}\n"
-                f"Slug: {market.get('market_slug', 'N/A')}\n"
-                f"Min Incentive size: {market.get('min_incentive_size', 'N/A')}\n"
-                f"Max Incentive size: {market.get('max_incentive_spread', 'N/A')}\n"
-                f"End date: {market.get('end_date_iso', 'N/A')}\n"
-                f"Start time: {market.get('game_start_time', 'N/A')}\n"
-                f"Min order size: {market.get('minimum_order_size', 'N/A')}\n"
-                f"Max tick size: {market.get('minimum_tick_size', 'N/A')}\n"
+                f"ID: {market.get('id', 'N/A')} (Condition: {market.get('conditionId', 'N/A')})\n"
+                f"Title: {market.get('title', market.get('question', 'N/A'))}\n"
+                f"Status: {status}\n"
                 f"Volume: {volume_str}\n"
+                f"End Date: {market.get('endDate', market.get('endDateIso', 'N/A'))}\n"
                 "---\n"
             )
         
@@ -182,20 +242,30 @@ def format_market_prices(market_data: dict) -> str:
     """Format market prices into a concise string."""
     try:
         if not market_data or not isinstance(market_data, dict):
-            return market_data
+            return "No price information available"
             
-        formatted_prices = [
-            f"Current Market Prices for {market_data.get('title', 'Unknown Market')}\n"
-        ]
+        title = market_data.get('title', market_data.get('question', 'Unknown Market'))
+        formatted_prices = [f"Current Market Prices for: {title}\n"]
         
-        # Extract price information from market data
-        # Note: Adjust this based on actual CLOB client response structure
-        current_price = market_data.get('current_price', 'N/A')
-        formatted_prices.append(
-            f"Current Price: {current_price}\n"
-            "---\n"
-        )
+        # Extract outcomes and prices
+        outcomes = market_data.get('outcomes', [])
+        outcome_prices = market_data.get('outcomePrices', [])
         
+        if isinstance(outcome_prices, str):
+            try:
+                outcome_prices = json.loads(outcome_prices)
+            except:
+                outcome_prices = []
+        
+        if outcomes and outcome_prices:
+            for i, outcome in enumerate(outcomes):
+                if i < len(outcome_prices):
+                    price = float(outcome_prices[i])
+                    formatted_prices.append(
+                        f"{outcome}: ${price:.2f} ({price*100:.1f}%)"
+                    )
+        
+        formatted_prices.append("\n---")
         return "\n".join(formatted_prices)
     except Exception as e:
         return f"Error formatting price data: {str(e)}"
@@ -206,123 +276,254 @@ def format_market_history(history_data: dict) -> str:
         if not history_data or not isinstance(history_data, dict):
             return "No historical data available"
             
-        formatted_history = [
-            f"Historical Data for {history_data.get('title', 'Unknown Market')}\n"
-        ]
+        title = history_data.get('title', history_data.get('question', 'Unknown Market'))
+        formatted_history = [f"Historical Data for: {title}\n"]
         
-        # Format historical data points
-        # Note: Adjust this based on actual CLOB client response structure
-        for point in history_data.get('history', [])[-5:]:
-            formatted_history.append(
-                f"Time: {point.get('timestamp', 'N/A')}\n"
-                f"Price: {point.get('price', 'N/A')}\n"
-                "---\n"
-            )
+        # Note: Gamma API doesn't provide detailed historical data
+        # This would need to be fetched from a different endpoint or service
+        formatted_history.append("Note: Detailed historical data requires additional API access")
+        formatted_history.append(f"Current Volume: ${history_data.get('volume', 0):,.2f}")
+        formatted_history.append(f"Created: {history_data.get('createdAt', 'N/A')}")
+        formatted_history.append("---")
         
         return "\n".join(formatted_history)
     except Exception as e:
         return f"Error formatting historical data: {str(e)}"
+
+async def fetch_gamma_markets(params: dict) -> list:
+    """Fetch markets from Gamma API with enhanced debugging and error handling"""
+    async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+        try:
+            url = f"{GAMMA_API_URL}/markets"
+            print(f"[DEBUG] Fetching from: {url}", file=sys.stderr)
+            print(f"[DEBUG] Request params: {json.dumps(params, indent=2)}", file=sys.stderr)
+            
+            # Add headers that might be required
+            headers = {
+                "Accept": "application/json",
+                "User-Agent": "polymarket-mcp/0.2.0"
+            }
+            
+            response = await client.get(url, params=params, headers=headers)
+            print(f"[DEBUG] Response status: {response.status_code}", file=sys.stderr)
+            
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    print(f"[DEBUG] Response data type: {type(data)}", file=sys.stderr)
+                    
+                    # Handle different response formats
+                    if isinstance(data, dict):
+                        # Check if data is wrapped in an object
+                        if 'data' in data:
+                            markets = data['data']
+                            print(f"[DEBUG] Found 'data' key, extracting markets", file=sys.stderr)
+                        elif 'markets' in data:
+                            markets = data['markets']
+                            print(f"[DEBUG] Found 'markets' key, extracting markets", file=sys.stderr)
+                        else:
+                            # Try to use the dict directly as a single market
+                            markets = [data]
+                            print(f"[DEBUG] Using response as single market", file=sys.stderr)
+                    elif isinstance(data, list):
+                        markets = data
+                        print(f"[DEBUG] Response is already a list", file=sys.stderr)
+                    else:
+                        print(f"[DEBUG] Unexpected data type: {type(data)}", file=sys.stderr)
+                        markets = []
+                    
+                    print(f"[DEBUG] Number of markets: {len(markets)}", file=sys.stderr)
+                    return markets
+                except json.JSONDecodeError as e:
+                    print(f"[DEBUG] JSON decode error: {e}", file=sys.stderr)
+                    return []
+            else:
+                print(f"[DEBUG] Error response status: {response.status_code}", file=sys.stderr)
+                return []
+        except httpx.TimeoutException:
+            print(f"[DEBUG] Request timed out after {TIMEOUT_SECONDS} seconds", file=sys.stderr)
+            return []
+        except httpx.NetworkError as e:
+            print(f"[DEBUG] Network error: {type(e).__name__}: {str(e)}", file=sys.stderr)
+            return []
+        except Exception as e:
+            print(f"[DEBUG] Unexpected error in fetch_gamma_markets: {type(e).__name__}: {str(e)}", file=sys.stderr)
+            return []
+
+async def fetch_gamma_market(market_id: str) -> dict:
+    """Fetch single market from Gamma API with enhanced debugging and error handling"""
+    async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+        try:
+            url = f"{GAMMA_API_URL}/markets/{market_id}"
+            print(f"[DEBUG] Fetching single market from: {url}", file=sys.stderr)
+            
+            headers = {
+                "Accept": "application/json",
+                "User-Agent": "polymarket-mcp/0.2.0"
+            }
+            
+            response = await client.get(url, headers=headers)
+            print(f"[DEBUG] Response status: {response.status_code}", file=sys.stderr)
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"[DEBUG] Market data received successfully", file=sys.stderr)
+                return data
+            elif response.status_code == 422:
+                print(f"[DEBUG] Validation error - market ID format may be incorrect", file=sys.stderr)
+                return {}
+            else:
+                print(f"[DEBUG] Error response status: {response.status_code}", file=sys.stderr)
+                return {}
+        except httpx.TimeoutException:
+            print(f"[DEBUG] Request timed out after {TIMEOUT_SECONDS} seconds", file=sys.stderr)
+            return {}
+        except httpx.NetworkError as e:
+            print(f"[DEBUG] Network error: {type(e).__name__}: {str(e)}", file=sys.stderr)
+            return {}
+        except Exception as e:
+            print(f"[DEBUG] Error fetching market: {type(e).__name__}: {str(e)}", file=sys.stderr)
+            return {}
 
 @server.call_tool()
 async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """
-    Handle tool execution requests.
+    Handle tool execution requests with timeout protection.
     Tools can fetch prediction market data and notify clients of changes.
     """
     if not arguments:
         return [types.TextContent(type="text", text="Missing arguments for the request")]
     
-    client = get_clob_client()
-    
     try:
-        if name == "get-market-info":
-            market_id = arguments.get("market_id")
-            if not market_id:
-                return [types.TextContent(type="text", text="Missing market_id parameter")]
-            
-            market_data = client.get_market(market_id)
-            formatted_info = format_market_info(market_data)
-            return [types.TextContent(type="text", text=formatted_info)]
+        # Wrap all tool calls in a timeout to prevent Claude from timing out first
+        async def execute_tool():
+            if name == "get-market-info":
+                market_id = arguments.get("market_id")
+                if not market_id:
+                    return [types.TextContent(type="text", text="Missing market_id parameter")]
+                
+                market_data = await fetch_gamma_market(market_id)
+                if not market_data:
+                    return [types.TextContent(type="text", text=f"Unable to fetch market {market_id}. It may not exist or the API may be unavailable.")]
+                    
+                formatted_info = format_market_info(market_data)
+                return [types.TextContent(type="text", text=formatted_info)]
 
-        elif name == "list-markets":
-            status = arguments.get("status")
-            
-            # Get markets using CLOB client
-            markets_data = client.get_markets()
+            elif name == "list-markets":
+                print(f"[DEBUG] list-markets called with arguments: {arguments}", file=sys.stderr)
+                
+                # Build params from actual arguments
+                params = {}
+                
+                # Handle active/closed filters
+                if arguments.get("active") is not None:
+                    params["active"] = arguments.get("active")
+                if arguments.get("closed") is not None:
+                    params["closed"] = arguments.get("closed")
+                    
+                # Handle pagination
+                params["limit"] = arguments.get("limit", 10)
+                params["offset"] = arguments.get("offset", 0)
+                
+                # Handle sorting
+                params["order"] = arguments.get("order", "desc")
+                
+                markets_data = await fetch_gamma_markets(params)
+                
+                if not markets_data:
+                    # Try with minimal parameters if full params fail
+                    print(f"[DEBUG] First attempt failed, trying minimal params", file=sys.stderr)
+                    minimal_params = {"limit": params["limit"]}
+                    markets_data = await fetch_gamma_markets(minimal_params)
+                
+                if not markets_data:
+                    return [types.TextContent(
+                        type="text", 
+                        text="Unable to fetch markets. The API may be temporarily unavailable or rate limited.\n\n"
+                             "Please try again in a moment."
+                    )]
+                
+                formatted_list = format_market_list(markets_data)
+                return [types.TextContent(type="text", text=formatted_list)]
 
-            # Handle string response (if the response is a JSON string)
-            if isinstance(markets_data, str):
-                try:
-                    markets_data = json.loads(markets_data)
-                except json.JSONDecodeError:
-                    return [types.TextContent(type="text", text="Error: Invalid response format from API")]
-            
-            # Ensure we have a list of markets
-            if not isinstance(markets_data, list):
-                if isinstance(markets_data, dict) and 'data' in markets_data:
-                    markets_data = markets_data['data']
-                else:
-                    return [types.TextContent(type="text", text="Error: Unexpected response format from API")]
-            
-            # Filter by status if specified
-            if status:
-                markets_data = [
-                    market for market in markets_data 
-                    if isinstance(market, dict) and market.get('status', '').lower() == status.lower()
-                ]
-            
-            # Apply pagination
-            offset = arguments.get("offset", 0)
-            limit = arguments.get("limit", 10)
-            markets_data = markets_data[offset:offset + limit]
-            
-            formatted_list = format_market_list(markets_data)
-            return [types.TextContent(type="text", text=formatted_list)]
+            elif name == "get-market-prices":
+                market_id = arguments.get("market_id")
+                if not market_id:
+                    return [types.TextContent(type="text", text="Missing market_id parameter")]
+                
+                market_data = await fetch_gamma_market(market_id)
+                if not market_data:
+                    return [types.TextContent(type="text", text=f"Unable to fetch market {market_id}. It may not exist or the API may be unavailable.")]
+                    
+                formatted_prices = format_market_prices(market_data)
+                return [types.TextContent(type="text", text=formatted_prices)]
 
-        elif name == "get-market-prices":
-            market_id = arguments.get("market_id")
-            if not market_id:
-                return [types.TextContent(type="text", text="Missing market_id parameter")]
-            
-            market_data = client.get_market(market_id)
-            formatted_prices = format_market_prices(market_data)
-            return [types.TextContent(type="text", text=formatted_prices)]
-
-        elif name == "get-market-history":
-            market_id = arguments.get("market_id")
-            timeframe = arguments.get("timeframe", "7d")
-            
-            if not market_id:
-                return [types.TextContent(type="text", text="Missing market_id parameter")]
-            
-            # Note: Adjust this based on actual CLOB client capabilities
-            market_data = client.get_market(market_id)
-            formatted_history = format_market_history(market_data)
-            return [types.TextContent(type="text", text=formatted_history)]
-            
-        else:
-            return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
-            
+            elif name == "get-market-history":
+                market_id = arguments.get("market_id")
+                timeframe = arguments.get("timeframe", "7d")
+                
+                if not market_id:
+                    return [types.TextContent(type="text", text="Missing market_id parameter")]
+                
+                # For now, return basic market data since Gamma API doesn't provide detailed history
+                market_data = await fetch_gamma_market(market_id)
+                if not market_data:
+                    return [types.TextContent(type="text", text=f"Unable to fetch market {market_id}. It may not exist or the API may be unavailable.")]
+                    
+                formatted_history = format_market_history(market_data)
+                return [types.TextContent(type="text", text=formatted_history)]
+                
+            else:
+                return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
+        
+        # Execute with a timeout slightly less than Claude's timeout
+        result = await asyncio.wait_for(execute_tool(), timeout=TIMEOUT_SECONDS - 1)
+        return result
+        
+    except asyncio.TimeoutError:
+        print(f"[DEBUG] Tool execution timed out after {TIMEOUT_SECONDS - 1} seconds", file=sys.stderr)
+        return [types.TextContent(
+            type="text", 
+            text=f"Request timed out after {TIMEOUT_SECONDS - 1} seconds. The API may be slow or unavailable."
+        )]
     except Exception as e:
+        print(f"[DEBUG] Error in handle_call_tool: {type(e).__name__}: {str(e)}", file=sys.stderr)
+        import traceback
+        print(f"[DEBUG] Traceback: {traceback.format_exc()}", file=sys.stderr)
         return [types.TextContent(type="text", text=f"Error executing tool: {str(e)}")]
 
 async def main():
     """Main entry point for the MCP server."""
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="polymarket_predictions",
-                server_version="0.1.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
+    print("[DEBUG] Starting polymarket-mcp server v0.2.0", file=sys.stderr)
+    print(f"[DEBUG] Gamma API URL: {GAMMA_API_URL}", file=sys.stderr)
+    print(f"[DEBUG] Timeout: {TIMEOUT_SECONDS} seconds", file=sys.stderr)
+    
+    # Initialize CLOB client early to catch any stdout output
+    print("[DEBUG] Initializing CLOB client...", file=sys.stderr)
+    get_clob_client()
+    print("[DEBUG] CLOB client initialization complete", file=sys.stderr)
+    
+    try:
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="polymarket_predictions",
+                    server_version="0.2.0",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
+            )
+    except Exception as e:
+        print(f"[DEBUG] Server error: {type(e).__name__}: {str(e)}", file=sys.stderr)
+        import traceback
+        print(f"[DEBUG] Traceback: {traceback.format_exc()}", file=sys.stderr)
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())
