@@ -3,6 +3,10 @@
 
 A Model Context Protocol (MCP) server that provides access to prediction market data through the PolyMarket API. This server implements a standardized interface for retrieving market information, prices, and historical data from prediction markets.
 
+<a href="https://glama.ai/mcp/servers/c255m147fd">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/c255m147fd/badge" alt="PolyMarket Server MCP server" />
+</a>
+
 ## Features
 
 - Real-time prediction market data with current prices and probabilities
@@ -39,7 +43,7 @@ npx -y @smithery/cli install polymarket_mcp --client claude
             ],
             "env": {
                 "KEY": "<insert poly market api key>",
-                "FUNDER": "<insert polymarket wallet address"
+                "FUNDER": "<insert polymarket wallet address>"
             }
         }
     }
