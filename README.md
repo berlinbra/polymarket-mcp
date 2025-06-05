@@ -82,7 +82,7 @@ Funder=poly market wallet address
 ```
 
 After connecting Claude client with the MCP tool via json file, run the server:
-In alpha-vantage-mcp repo: `uv run src/polymarket_mcp/server.py`
+In polymark_mcp repo: `uv run src/polymarket_mcp/server.py`
 
 
 ## Available Tools
