@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/berlinbra-polymarket-mcp-badge.png)](https://mseep.ai/app/berlinbra-polymarket-mcp)
+
 # PolyMarket MCP Server
 [![smithery badge](https://smithery.ai/badge/polymarket_mcp)](https://smithery.ai/server/polymarket_mcp)
 
