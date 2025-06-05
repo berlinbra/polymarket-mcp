@@ -79,7 +79,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug, e.g. '12' or 'will-bitcoin-reach-100k')",
                     },
                 },
                 "required": ["market_id"],
@@ -114,11 +114,11 @@ async def handle_list_tools() -> list[types.Tool]:
                         "default": 0,
                         "minimum": 0
                     },
-                    "order_by": {
+                    "order": {
                         "type": "string",
-                        "description": "Sort markets by field",
-                        "enum": ["volume", "liquidity", "startDate", "endDate", "createdAt"],
-                        "default": "volume"
+                        "description": "Sort order",
+                        "enum": ["asc", "desc"],
+                        "default": "desc"
                     }
                 },
             },
@@ -131,7 +131,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug)",
                     },
                 },
                 "required": ["market_id"],
@@ -145,7 +145,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug)",
                     },
                     "timeframe": {
                         "type": "string",
@@ -165,6 +165,8 @@ def format_market_info(market_data: dict) -> str:
         if not market_data or not isinstance(market_data, dict):
             return "No market information available"
             
+        # Store both IDs for reference
+        numeric_id = market_data.get('id', 'N/A')
         condition_id = market_data.get('conditionId', 'N/A')
         title = market_data.get('title', market_data.get('question', 'N/A'))
         status = "Active" if market_data.get('active', False) else "Closed" if market_data.get('closed', False) else "Unknown"
@@ -190,7 +192,8 @@ def format_market_info(market_data: dict) -> str:
                 outcomes_str += f"  - {outcome}: ${price:.2f} ({price*100:.1f}%)\n"
         
         return (
-            f"Market ID: {condition_id}\n"
+            f"Market ID: {numeric_id}\n"
+            f"Condition ID: {condition_id}\n"
             f"Title: {title}\n"
             f"Status: {status}\n"
             f"End Date: {end_date}\n"
@@ -220,7 +223,7 @@ def format_market_list(markets_data: list) -> str:
             status = "Active" if market.get('active', False) else "Closed" if market.get('closed', False) else "Unknown"
             
             formatted_markets.append(
-                f"ID: {market.get('conditionId', 'N/A')}\n"
+                f"ID: {market.get('id', 'N/A')} (Condition: {market.get('conditionId', 'N/A')})\n"
                 f"Title: {market.get('title', market.get('question', 'N/A'))}\n"
                 f"Status: {status}\n"
                 f"Volume: {volume_str}\n"
@@ -399,36 +402,34 @@ async def handle_call_tool(
             return [types.TextContent(type="text", text=formatted_info)]
 
         elif name == "list-markets":
-            # Try multiple parameter combinations to debug
             print(f"[DEBUG] list-markets called with arguments: {arguments}", file=sys.stderr)
             
-            # First try with minimal parameters
-            simple_params = {"limit": 5}
-            print(f"[DEBUG] Trying simple request first", file=sys.stderr)
-            markets_data = await fetch_gamma_markets(simple_params)
+            # Build params from actual arguments
+            params = {}
+            
+            # Handle active/closed filters
+            if arguments.get("active") is not None:
+                params["active"] = arguments.get("active")
+            if arguments.get("closed") is not None:
+                params["closed"] = arguments.get("closed")
+                
+            # Handle pagination
+            params["limit"] = arguments.get("limit", 10)
+            params["offset"] = arguments.get("offset", 0)
+            
+            # Handle sorting
+            params["order"] = arguments.get("order", "desc")
+            
+            # Note: The API might not support all these parameters
+            # We'll see what works based on the response
+            
+            markets_data = await fetch_gamma_markets(params)
             
             if not markets_data:
-                # Try without any parameters
-                print(f"[DEBUG] Simple request failed, trying without parameters", file=sys.stderr)
-                markets_data = await fetch_gamma_markets({})
-            
-            if not markets_data:
-                # Try with the original parameters
-                print(f"[DEBUG] Trying with original parameters", file=sys.stderr)
-                params = {
-                    "active": arguments.get("active", True),
-                    "closed": arguments.get("closed", False),
-                    "limit": arguments.get("limit", 10),
-                    "offset": arguments.get("offset", 0),
-                }
-                
-                # Add optional sorting
-                order_by = arguments.get("order_by", "volume")
-                if order_by:
-                    params["order"] = "desc"
-                    params["orderBy"] = order_by
-                
-                markets_data = await fetch_gamma_markets(params)
+                # Try with minimal parameters if full params fail
+                print(f"[DEBUG] First attempt failed, trying minimal params", file=sys.stderr)
+                minimal_params = {"limit": params["limit"]}
+                markets_data = await fetch_gamma_markets(minimal_params)
             
             if not markets_data:
                 return [types.TextContent(
