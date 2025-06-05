@@ -9,6 +9,17 @@ from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
 import os
 from dotenv import load_dotenv
+
+# Redirect all print statements to stderr to avoid breaking JSON-RPC protocol
+import builtins
+original_print = builtins.print
+def safe_print(*args, **kwargs):
+    """Override print to always use stderr"""
+    kwargs['file'] = sys.stderr
+    original_print(*args, **kwargs)
+builtins.print = safe_print
+
+# Now we can safely import libraries that might print to stdout
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs
 from py_clob_client.constants import POLYGON
@@ -23,20 +34,35 @@ GAMMA_API_URL = "https://gamma-api.polymarket.com"
 
 # Initialize CLOB client (still needed for trading operations)
 def get_clob_client() -> ClobClient:
-    host = os.getenv("CLOB_HOST", "https://clob.polymarket.com")
-    key = os.getenv("KEY")  # Private key exported from polymarket UI
-    funder = os.getenv("FUNDER")  # Funder address from polymarket UI
-    chain_id = POLYGON
-    
-    client = ClobClient(
-        host,
-        key=key,
-        chain_id=POLYGON,
-        funder=funder,
-        signature_type=1,
-    )
-    client.set_api_creds(client.create_or_derive_api_creds())
-    return client
+    try:
+        host = os.getenv("CLOB_HOST", "https://clob.polymarket.com")
+        key = os.getenv("KEY", "dummy_key")  # Use dummy key if not provided
+        funder = os.getenv("FUNDER", "0x0000000000000000000000000000000000000000")  # Use dummy address if not provided
+        chain_id = POLYGON
+        
+        # Suppress any output from CLOB client initialization
+        import io
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        
+        try:
+            client = ClobClient(
+                host,
+                key=key,
+                chain_id=POLYGON,
+                funder=funder,
+                signature_type=1,
+            )
+            # Only try to set API creds if we have a real key
+            if key != "dummy_key":
+                client.set_api_creds(client.create_or_derive_api_creds())
+        finally:
+            sys.stdout = old_stdout
+            
+        return client
+    except Exception as e:
+        print(f"[DEBUG] CLOB client initialization failed: {e}", file=sys.stderr)
+        return None
 
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
@@ -452,6 +478,11 @@ async def main():
     """Main entry point for the MCP server."""
     print("[DEBUG] Starting polymarket-mcp server v0.2.0", file=sys.stderr)
     print(f"[DEBUG] Gamma API URL: {GAMMA_API_URL}", file=sys.stderr)
+    
+    # Initialize CLOB client early to catch any stdout output
+    print("[DEBUG] Initializing CLOB client...", file=sys.stderr)
+    get_clob_client()
+    print("[DEBUG] CLOB client initialization complete", file=sys.stderr)
     
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
