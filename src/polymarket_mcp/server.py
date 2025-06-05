@@ -2,6 +2,7 @@ from typing import Any
 import asyncio
 import httpx
 import json
+import sys
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
@@ -258,31 +259,96 @@ def format_market_history(history_data: dict) -> str:
         return f"Error formatting historical data: {str(e)}"
 
 async def fetch_gamma_markets(params: dict) -> list:
-    """Fetch markets from Gamma API"""
-    async with httpx.AsyncClient() as client:
+    """Fetch markets from Gamma API with enhanced debugging"""
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            response = await client.get(f"{GAMMA_API_URL}/markets", params=params)
+            url = f"{GAMMA_API_URL}/markets"
+            print(f"[DEBUG] Fetching from: {url}", file=sys.stderr)
+            print(f"[DEBUG] Request params: {json.dumps(params, indent=2)}", file=sys.stderr)
+            
+            # Add headers that might be required
+            headers = {
+                "Accept": "application/json",
+                "User-Agent": "polymarket-mcp/0.2.0"
+            }
+            
+            response = await client.get(url, params=params, headers=headers)
+            print(f"[DEBUG] Response status: {response.status_code}", file=sys.stderr)
+            print(f"[DEBUG] Response headers: {dict(response.headers)}", file=sys.stderr)
+            
             if response.status_code == 200:
-                return response.json()
+                try:
+                    data = response.json()
+                    print(f"[DEBUG] Response data type: {type(data)}", file=sys.stderr)
+                    
+                    # Handle different response formats
+                    if isinstance(data, dict):
+                        # Check if data is wrapped in an object
+                        if 'data' in data:
+                            markets = data['data']
+                            print(f"[DEBUG] Found 'data' key, extracting markets", file=sys.stderr)
+                        elif 'markets' in data:
+                            markets = data['markets']
+                            print(f"[DEBUG] Found 'markets' key, extracting markets", file=sys.stderr)
+                        else:
+                            # Try to use the dict directly as a single market
+                            markets = [data]
+                            print(f"[DEBUG] Using response as single market", file=sys.stderr)
+                    elif isinstance(data, list):
+                        markets = data
+                        print(f"[DEBUG] Response is already a list", file=sys.stderr)
+                    else:
+                        print(f"[DEBUG] Unexpected data type: {type(data)}", file=sys.stderr)
+                        markets = []
+                    
+                    print(f"[DEBUG] Number of markets: {len(markets)}", file=sys.stderr)
+                    if markets and len(markets) > 0:
+                        print(f"[DEBUG] First market sample: {json.dumps(markets[0], indent=2)[:500]}...", file=sys.stderr)
+                    
+                    return markets
+                except json.JSONDecodeError as e:
+                    print(f"[DEBUG] JSON decode error: {e}", file=sys.stderr)
+                    print(f"[DEBUG] Raw response: {response.text[:500]}...", file=sys.stderr)
+                    return []
             else:
-                print(f"Error fetching markets: HTTP {response.status_code}")
+                print(f"[DEBUG] Error response: {response.text[:500]}...", file=sys.stderr)
                 return []
+        except httpx.TimeoutException:
+            print(f"[DEBUG] Request timed out after 30 seconds", file=sys.stderr)
+            return []
+        except httpx.NetworkError as e:
+            print(f"[DEBUG] Network error: {type(e).__name__}: {str(e)}", file=sys.stderr)
+            return []
         except Exception as e:
-            print(f"Error fetching markets: {str(e)}")
+            print(f"[DEBUG] Unexpected error in fetch_gamma_markets: {type(e).__name__}: {str(e)}", file=sys.stderr)
+            import traceback
+            print(f"[DEBUG] Traceback: {traceback.format_exc()}", file=sys.stderr)
             return []
 
 async def fetch_gamma_market(market_id: str) -> dict:
-    """Fetch single market from Gamma API"""
-    async with httpx.AsyncClient() as client:
+    """Fetch single market from Gamma API with enhanced debugging"""
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            response = await client.get(f"{GAMMA_API_URL}/markets/{market_id}")
+            url = f"{GAMMA_API_URL}/markets/{market_id}"
+            print(f"[DEBUG] Fetching single market from: {url}", file=sys.stderr)
+            
+            headers = {
+                "Accept": "application/json",
+                "User-Agent": "polymarket-mcp/0.2.0"
+            }
+            
+            response = await client.get(url, headers=headers)
+            print(f"[DEBUG] Response status: {response.status_code}", file=sys.stderr)
+            
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                print(f"[DEBUG] Market data received: {json.dumps(data, indent=2)[:500]}...", file=sys.stderr)
+                return data
             else:
-                print(f"Error fetching market {market_id}: HTTP {response.status_code}")
+                print(f"[DEBUG] Error fetching market: {response.text[:500]}...", file=sys.stderr)
                 return {}
         except Exception as e:
-            print(f"Error fetching market: {str(e)}")
+            print(f"[DEBUG] Error fetching market: {type(e).__name__}: {str(e)}", file=sys.stderr)
             return {}
 
 @server.call_tool()
@@ -307,21 +373,48 @@ async def handle_call_tool(
             return [types.TextContent(type="text", text=formatted_info)]
 
         elif name == "list-markets":
-            # Build query parameters for Gamma API
-            params = {
-                "active": arguments.get("active", True),
-                "closed": arguments.get("closed", False),
-                "limit": arguments.get("limit", 10),
-                "offset": arguments.get("offset", 0),
-            }
+            # Try multiple parameter combinations to debug
+            print(f"[DEBUG] list-markets called with arguments: {arguments}", file=sys.stderr)
             
-            # Add optional sorting
-            order_by = arguments.get("order_by", "volume")
-            if order_by:
-                params["order"] = "desc"  # Usually want highest first
-                params["orderBy"] = order_by
+            # First try with minimal parameters
+            simple_params = {"limit": 5}
+            print(f"[DEBUG] Trying simple request first", file=sys.stderr)
+            markets_data = await fetch_gamma_markets(simple_params)
             
-            markets_data = await fetch_gamma_markets(params)
+            if not markets_data:
+                # Try without any parameters
+                print(f"[DEBUG] Simple request failed, trying without parameters", file=sys.stderr)
+                markets_data = await fetch_gamma_markets({})
+            
+            if not markets_data:
+                # Try with the original parameters
+                print(f"[DEBUG] Trying with original parameters", file=sys.stderr)
+                params = {
+                    "active": arguments.get("active", True),
+                    "closed": arguments.get("closed", False),
+                    "limit": arguments.get("limit", 10),
+                    "offset": arguments.get("offset", 0),
+                }
+                
+                # Add optional sorting
+                order_by = arguments.get("order_by", "volume")
+                if order_by:
+                    params["order"] = "desc"
+                    params["orderBy"] = order_by
+                
+                markets_data = await fetch_gamma_markets(params)
+            
+            if not markets_data:
+                return [types.TextContent(
+                    type="text", 
+                    text="Unable to fetch markets. Check the server logs for debugging information.\n\n"
+                         "Possible issues:\n"
+                         "- Network connectivity to gamma-api.polymarket.com\n"
+                         "- API endpoint changes\n"
+                         "- Rate limiting\n"
+                         "- Geographic restrictions"
+                )]
+            
             formatted_list = format_market_list(markets_data)
             return [types.TextContent(type="text", text=formatted_list)]
 
@@ -350,10 +443,16 @@ async def handle_call_tool(
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
             
     except Exception as e:
+        print(f"[DEBUG] Error in handle_call_tool: {type(e).__name__}: {str(e)}", file=sys.stderr)
+        import traceback
+        print(f"[DEBUG] Traceback: {traceback.format_exc()}", file=sys.stderr)
         return [types.TextContent(type="text", text=f"Error executing tool: {str(e)}")]
 
 async def main():
     """Main entry point for the MCP server."""
+    print("[DEBUG] Starting polymarket-mcp server v0.2.0", file=sys.stderr)
+    print(f"[DEBUG] Gamma API URL: {GAMMA_API_URL}", file=sys.stderr)
+    
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
