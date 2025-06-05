@@ -1,4 +1,3 @@
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/berlinbra-polymarket-mcp-badge.png)](https://mseep.ai/app/berlinbra-polymarket-mcp)
 
 # PolyMarket MCP Server
 [![smithery badge](https://smithery.ai/badge/polymarket_mcp)](https://smithery.ai/server/polymarket_mcp)
@@ -8,6 +7,8 @@ A Model Context Protocol (MCP) server that provides access to prediction market 
 <a href="https://glama.ai/mcp/servers/c255m147fd">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/c255m147fd/badge" alt="PolyMarket Server MCP server" />
 </a>
+
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/berlinbra-polymarket-mcp-badge.png)](https://mseep.ai/app/berlinbra-polymarket-mcp)
 
 ## Features
 
