@@ -1,15 +1,23 @@
 # PolyMarket MCP Server
 [![smithery badge](https://smithery.ai/badge/polymarket_mcp)](https://smithery.ai/server/polymarket_mcp)
 
-A Model Context Protocol (MCP) server that provides access to prediction market data through the PolyMarket API. This server implements a standardized interface for retrieving market information, prices, and historical data from prediction markets.
+A Model Context Protocol (MCP) server that provides access to prediction market data through the PolyMarket Gamma API. This server implements a standardized interface for retrieving market information, prices, and historical data from prediction markets.
 
 ## Features
 
 - Real-time prediction market data with current prices and probabilities
+- Direct integration with Polymarket's Gamma API for latest market listings
 - Detailed market information including categories, resolution dates, and descriptions
-- Historical price and volume data with customizable timeframes (1d, 7d, 30d, all)
-- Built-in error handling and rate limit management
+- Market filtering by status (active/closed) and sorting by volume, liquidity, etc.
+- Built-in error handling and async HTTP client for better performance
 - Clean data formatting for easy consumption
+
+## Recent Updates (v0.2.0)
+
+- **Fixed issue with fetching new market listings** - Now uses Gamma API directly instead of CLOB client
+- Added support for market sorting (by volume, liquidity, startDate, etc.)
+- Improved async handling for better performance
+- Enhanced error messages and debugging
 
 ## Installation
 
@@ -99,13 +107,15 @@ The server implements four tools:
 
 **Example Response:**
 ```
-Title: Example Market
-Category: Politics
-Status: Open
-Resolution Date: 2024-12-31
+Market ID: 0x123...
+Title: Will BTC reach $100k by end of 2025?
+Status: Active
+End Date: 2025-12-31
 Volume: $1,234,567.89
 Liquidity: $98,765.43
-Description: This is an example prediction market...
+Outcomes:
+  - Yes: $0.65 (65.0%)
+  - No: $0.35 (35.0%)
 ---
 ```
 
@@ -114,10 +124,15 @@ Description: This is an example prediction market...
 **Input Schema:**
 ```json
 {
-    "status": {
-        "type": "string",
-        "description": "Filter by market status",
-        "enum": ["open", "closed", "resolved"]
+    "active": {
+        "type": "boolean",
+        "description": "Filter by active markets",
+        "default": true
+    },
+    "closed": {
+        "type": "boolean",
+        "description": "Filter by closed markets",
+        "default": false
     },
     "limit": {
         "type": "integer",
@@ -131,6 +146,12 @@ Description: This is an example prediction market...
         "description": "Number of markets to skip (for pagination)",
         "default": 0,
         "minimum": 0
+    },
+    "order_by": {
+        "type": "string",
+        "description": "Sort markets by field",
+        "enum": ["volume", "liquidity", "startDate", "endDate", "createdAt"],
+        "default": "volume"
     }
 }
 ```
@@ -139,16 +160,18 @@ Description: This is an example prediction market...
 ```
 Available Markets:
 
-ID: market-123
+ID: 0x123...
 Title: US Presidential Election 2024
-Status: Open
+Status: Active
 Volume: $1,234,567.89
+End Date: 2024-11-05
 ---
 
-ID: market-124
+ID: 0x124...
 Title: Oscar Best Picture 2024
-Status: Open
+Status: Active
 Volume: $234,567.89
+End Date: 2024-03-10
 ---
 ```
 
@@ -166,16 +189,11 @@ Volume: $234,567.89
 
 **Example Response:**
 ```
-Current Market Prices for US Presidential Election 2024
+Current Market Prices for: US Presidential Election 2024
 
-Outcome: Democratic
-Price: $0.6500
-Probability: 65.0%
----
+Democratic: $0.65 (65.0%)
+Republican: $0.35 (35.0%)
 
-Outcome: Republican
-Price: $0.3500
-Probability: 35.0%
 ---
 ```
 
@@ -199,26 +217,27 @@ Probability: 35.0%
 
 **Example Response:**
 ```
-Historical Data for US Presidential Election 2024
-Time Period: 7d
+Historical Data for: US Presidential Election 2024
 
-Time: 2024-01-20T12:00:00Z
-Price: $0.6500
-Volume: $123,456.78
----
-
-Time: 2024-01-19T12:00:00Z
-Price: $0.6300
-Volume: $98,765.43
+Note: Detailed historical data requires additional API access
+Current Volume: $1,234,567.89
+Created: 2024-01-01T00:00:00Z
 ---
 ```
+
+## API Changes
+
+### Version 0.2.0
+- Migrated from CLOB client's `get_markets()` to direct Gamma API calls
+- Added async HTTP client for better performance
+- Updated response parsing to match Gamma API structure
+- Added sorting and filtering parameters for market listings
 
 ## Error Handling
 
 The server includes comprehensive error handling for various scenarios:
 
-- Rate limiting (429 errors)
-- Invalid API keys (403 errors)
+- API connection errors
 - Invalid market IDs (404 errors)
 - Network connectivity issues
 - API timeout conditions (30-second timeout)
@@ -232,7 +251,19 @@ Error messages are returned in a clear, human-readable format.
 - httpx>=0.24.0
 - mcp-core
 - python-dotenv>=1.0.0
+- py-clob-client (for trading operations, not used for market data)
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+## Changelog
+
+### v0.2.0 (2025-06-05)
+- Fixed issue with fetching new market listings
+- Migrated to Gamma API for market data
+- Added market sorting options
+- Improved async performance
+
+### v0.1.0
+- Initial release with CLOB client integration
