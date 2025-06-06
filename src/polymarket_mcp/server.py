@@ -121,12 +121,6 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Number of markets to skip (for pagination)",
                         "default": 0,
                         "minimum": 0
-                    },
-                    "order": {
-                        "type": "string",
-                        "description": "Sort order",
-                        "enum": ["asc", "desc"],
-                        "default": "desc"
                     }
                 },
             },
@@ -406,10 +400,11 @@ async def fetch_gamma_market(market_id: str) -> dict:
             return {}
 
 async def test_gamma_api_connectivity():
-    """Test if Gamma API is reachable"""
+    """Test if Gamma API is reachable and find working parameters"""
     print("[DEBUG] Testing Gamma API connectivity...", file=sys.stderr)
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
+            # Test 1: Basic connectivity
             response = await client.get(f"{GAMMA_API_URL}/markets?limit=1")
             if response.status_code == 200:
                 print(f"[DEBUG] ✅ Gamma API is reachable! Status: {response.status_code}", file=sys.stderr)
@@ -421,8 +416,39 @@ async def test_gamma_api_connectivity():
                         print(f"[DEBUG]    Title: {data[0].get('title', data[0].get('question', 'N/A'))}", file=sys.stderr)
                         print(f"[DEBUG]    Active: {data[0].get('active', 'N/A')}", file=sys.stderr)
                         print(f"[DEBUG]    Archived: {data[0].get('archived', 'N/A')}", file=sys.stderr)
-                except:
-                    print(f"[DEBUG] ⚠️  API reachable but response format unexpected", file=sys.stderr)
+                        print(f"[DEBUG]    End Date: {data[0].get('endDate', 'N/A')}", file=sys.stderr)
+                        
+                        # Test 2: Check if archived parameter works
+                        print(f"[DEBUG] Testing archived=false parameter...", file=sys.stderr)
+                        resp2 = await client.get(f"{GAMMA_API_URL}/markets?limit=1&archived=false")
+                        if resp2.status_code == 200:
+                            data2 = resp2.json()
+                            if data2 and len(data2) > 0:
+                                end_date = data2[0].get('endDate', '')
+                                if '2020' in str(end_date) or '2021' in str(end_date):
+                                    print(f"[DEBUG] ⚠️  archived=false still returns old markets!", file=sys.stderr)
+                                else:
+                                    print(f"[DEBUG] ✅ archived=false works correctly", file=sys.stderr)
+                        
+                        # Test 3: Try other parameters
+                        print(f"[DEBUG] Testing other parameter combinations...", file=sys.stderr)
+                        test_params = [
+                            {"limit": 1, "live": True},
+                            {"limit": 1, "status": "active"},
+                            {"limit": 1, "resolved": False},
+                            {"limit": 1, "enable_order_book": True}
+                        ]
+                        for params in test_params:
+                            resp = await client.get(f"{GAMMA_API_URL}/markets", params=params)
+                            if resp.status_code == 200:
+                                test_data = resp.json()
+                                if test_data and len(test_data) > 0:
+                                    test_end_date = test_data[0].get('endDate', '')
+                                    if '2025' in str(test_end_date) or '2024' in str(test_end_date):
+                                        print(f"[DEBUG] ✅ Found current markets with params: {params}", file=sys.stderr)
+                                        break
+                except Exception as e:
+                    print(f"[DEBUG] ⚠️  API reachable but response format unexpected: {str(e)}", file=sys.stderr)
             else:
                 print(f"[DEBUG] ❌ Gamma API returned error status: {response.status_code}", file=sys.stderr)
         except httpx.ConnectError as e:
@@ -486,21 +512,50 @@ async def handle_call_tool(
                 params["limit"] = arguments.get("limit", 10)
                 params["offset"] = arguments.get("offset", 0)
                 
-                # Handle sorting
-                params["order"] = arguments.get("order", "desc")
+                # Don't include order parameter - it causes validation errors
+                # params["order"] = arguments.get("order", "desc")
                 
                 print(f"[DEBUG] Attempting to fetch from Gamma API...", file=sys.stderr)
                 markets_data = await fetch_gamma_markets(params)
                 
                 if not markets_data:
-                    # Try with minimal parameters if full params fail
-                    print(f"[DEBUG] First attempt failed, trying minimal params", file=sys.stderr)
-                    minimal_params = {
+                    # Try different parameter combinations
+                    print(f"[DEBUG] First attempt failed, trying without archived param", file=sys.stderr)
+                    alt_params = {
                         "active": True,
-                        "archived": False,
+                        "limit": params["limit"]
+                    }
+                    markets_data = await fetch_gamma_markets(alt_params)
+                
+                if not markets_data:
+                    # Try with just limit
+                    print(f"[DEBUG] Second attempt failed, trying with just limit", file=sys.stderr)
+                    minimal_params = {
                         "limit": params["limit"]
                     }
                     markets_data = await fetch_gamma_markets(minimal_params)
+                
+                # Check if we got old data despite archived=false
+                if markets_data and isinstance(markets_data, list) and len(markets_data) > 0:
+                    first_market = markets_data[0]
+                    end_date = first_market.get('endDate', first_market.get('end_date_iso', ''))
+                    if '2020' in str(end_date) or '2021' in str(end_date):
+                        print(f"[DEBUG] ⚠️  WARNING: API returned old markets despite archived=false!", file=sys.stderr)
+                        print(f"[DEBUG] Sample market end date: {end_date}", file=sys.stderr)
+                        
+                        # Try to find if there's a different parameter for filtering old markets
+                        print(f"[DEBUG] Trying with 'live' parameter instead", file=sys.stderr)
+                        live_params = {
+                            "live": True,
+                            "limit": params["limit"]
+                        }
+                        new_markets = await fetch_gamma_markets(live_params)
+                        if new_markets and isinstance(new_markets, list) and len(new_markets) > 0:
+                            first_new = new_markets[0]
+                            new_end_date = first_new.get('endDate', first_new.get('end_date_iso', ''))
+                            if '2025' in str(new_end_date) or '2024' in str(new_end_date):
+                                print(f"[DEBUG] ✅ Found current markets with 'live' parameter!", file=sys.stderr)
+                                markets_data = new_markets
                 
                 if not markets_data:
                     print(f"[DEBUG] Gamma API failed, falling back to CLOB client", file=sys.stderr)
