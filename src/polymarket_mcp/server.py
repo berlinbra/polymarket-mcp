@@ -104,6 +104,11 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Filter by closed markets",
                         "default": False,
                     },
+                    "archived": {
+                        "type": "boolean",
+                        "description": "Filter by archived markets (set to false to exclude old markets)",
+                        "default": False,
+                    },
                     "limit": {
                         "type": "integer",
                         "description": "Number of markets to return (default: 10)",
@@ -394,7 +399,7 @@ async def handle_call_tool(
     Tools can fetch prediction market data and notify clients of changes.
     """
     if not arguments:
-        return [types.TextContent(type="text", text="Missing arguments for the request")]
+        arguments = {}
     
     try:
         # Wrap all tool calls in a timeout to prevent Claude from timing out first
@@ -420,8 +425,20 @@ async def handle_call_tool(
                 # Handle active/closed filters
                 if arguments.get("active") is not None:
                     params["active"] = arguments.get("active")
+                else:
+                    # Default to active markets if not specified
+                    if "closed" not in arguments:
+                        params["active"] = True
+                        
                 if arguments.get("closed") is not None:
                     params["closed"] = arguments.get("closed")
+                    
+                # Handle archived filter - this is the key fix!
+                if arguments.get("archived") is not None:
+                    params["archived"] = arguments.get("archived")
+                else:
+                    # Default to excluding archived markets
+                    params["archived"] = False
                     
                 # Handle pagination
                 params["limit"] = arguments.get("limit", 10)
@@ -435,7 +452,11 @@ async def handle_call_tool(
                 if not markets_data:
                     # Try with minimal parameters if full params fail
                     print(f"[DEBUG] First attempt failed, trying minimal params", file=sys.stderr)
-                    minimal_params = {"limit": params["limit"]}
+                    minimal_params = {
+                        "active": True,
+                        "archived": False,
+                        "limit": params["limit"]
+                    }
                     markets_data = await fetch_gamma_markets(minimal_params)
                 
                 if not markets_data:
