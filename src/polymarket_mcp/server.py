@@ -17,6 +17,10 @@ load_dotenv()
 
 server = Server("polymarket_predictions")
 
+# Gamma API endpoint
+GAMMA_API_URL = "https://gamma-api.polymarket.com"
+TIMEOUT_SECONDS = 30
+
 # Initialize CLOB client
 def get_clob_client() -> ClobClient:
     host = os.getenv("CLOB_HOST", "https://clob.polymarket.com")
@@ -34,6 +38,20 @@ def get_clob_client() -> ClobClient:
     client.set_api_creds(client.create_or_derive_api_creds())
     return client
 
+async def fetch_gamma_markets(params: dict):
+    """Fetch markets from the Gamma API"""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_SECONDS)) as client:
+        try:
+            response = await client.get(f"{GAMMA_API_URL}/markets", params=params)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"[DEBUG] Gamma API returned {response.status_code}: {response.text}")
+                return None
+        except Exception as e:
+            print(f"[DEBUG] Error fetching from Gamma API: {str(e)}")
+            return None
+
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     """
@@ -49,7 +67,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug, e.g. '12' or 'will-bitcoin-reach-100k')",
                     },
                 },
                 "required": ["market_id"],
@@ -61,10 +79,20 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "status": {
-                        "type": "string",
-                        "description": "Filter by market status (e.g., open, closed, resolved)",
-                        "enum": ["active", "resolved"],
+                    "active": {
+                        "type": "boolean",
+                        "description": "Filter by active markets",
+                        "default": True
+                    },
+                    "closed": {
+                        "type": "boolean",
+                        "description": "Filter by closed markets",
+                        "default": False
+                    },
+                    "archived": {
+                        "type": "boolean",
+                        "description": "Filter by archived markets (set to false to exclude old markets)",
+                        "default": False
                     },
                     "limit": {
                         "type": "integer",
@@ -78,6 +106,12 @@ async def handle_list_tools() -> list[types.Tool]:
                         "description": "Number of markets to skip (for pagination)",
                         "default": 0,
                         "minimum": 0
+                    },
+                    "order": {
+                        "type": "string",
+                        "description": "Sort order",
+                        "enum": ["asc", "desc"],
+                        "default": "desc"
                     }
                 },
             },
@@ -90,7 +124,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug)",
                     },
                 },
                 "required": ["market_id"],
@@ -104,7 +138,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "market_id": {
                         "type": "string",
-                        "description": "Market ID or slug",
+                        "description": "Market ID (numeric ID or slug)",
                     },
                     "timeframe": {
                         "type": "string",
@@ -125,15 +159,22 @@ def format_market_info(market_data: dict) -> str:
             return "No market information available"
             
         condition_id = market_data.get('condition_id', 'N/A')
-        title = market_data.get('title', 'N/A')
-        status = market_data.get('status', 'N/A')
-        resolution_date = market_data.get('resolution_date', 'N/A')
+        title = market_data.get('title', market_data.get('question', 'N/A'))
+        status = 'Active' if market_data.get('active') else 'Closed' if market_data.get('closed') else 'Unknown'
+        end_date = market_data.get('end_date_iso', 'N/A')
+        volume = market_data.get('volume', 0)
+        
+        try:
+            volume_str = f"${float(volume):,.2f}"
+        except (ValueError, TypeError):
+            volume_str = f"${volume}"
             
         return (
             f"Condition ID: {condition_id}\n"
             f"Title: {title}\n"
             f"Status: {status}\n"
-            f"Resolution Date: {resolution_date}\n"
+            f"End Date: {end_date}\n"
+            f"Volume: {volume_str}\n"
             "---"
         )
     except Exception as e:
@@ -154,23 +195,17 @@ def format_market_list(markets_data: list) -> str:
             except (ValueError, TypeError):
                 volume_str = f"${market.get('volume', 0)}"
                 
+            title = market.get('title', market.get('question', 'N/A'))
+            status = 'Active' if market.get('active') else 'Closed' if market.get('closed') else 'Unknown'
+                
             formatted_markets.append(
                 f"Condition ID: {market.get('condition_id', 'N/A')}\n"
-                f"Description: {market.get('description', 'N/A')}\n"
+                f"Title: {title}\n"
+                f"Status: {status}\n"
                 f"Category: {market.get('category', 'N/A')}\n"
-                f"Tokens: {market.get('question', 'N/A')}\n"
-                f"Question: {market.get('active', 'N/A')}\n"
-                f"Rewards: {market.get('rewards', 'N/A')}\n"
-                f"Active: {market.get('active', 'N/A')}\n"
-                f"Closed: {market.get('closed', 'N/A')}\n"
-                f"Slug: {market.get('market_slug', 'N/A')}\n"
-                f"Min Incentive size: {market.get('min_incentive_size', 'N/A')}\n"
-                f"Max Incentive size: {market.get('max_incentive_spread', 'N/A')}\n"
-                f"End date: {market.get('end_date_iso', 'N/A')}\n"
-                f"Start time: {market.get('game_start_time', 'N/A')}\n"
-                f"Min order size: {market.get('minimum_order_size', 'N/A')}\n"
-                f"Max tick size: {market.get('minimum_tick_size', 'N/A')}\n"
                 f"Volume: {volume_str}\n"
+                f"End Date: {market.get('end_date_iso', 'N/A')}\n"
+                f"Slug: {market.get('market_slug', 'N/A')}\n"
                 "---\n"
             )
         
@@ -182,19 +217,36 @@ def format_market_prices(market_data: dict) -> str:
     """Format market prices into a concise string."""
     try:
         if not market_data or not isinstance(market_data, dict):
-            return market_data
+            return "No price data available"
             
+        title = market_data.get('title', market_data.get('question', 'Unknown Market'))
         formatted_prices = [
-            f"Current Market Prices for {market_data.get('title', 'Unknown Market')}\n"
+            f"Current Market Prices for {title}\n"
         ]
         
-        # Extract price information from market data
-        # Note: Adjust this based on actual CLOB client response structure
-        current_price = market_data.get('current_price', 'N/A')
-        formatted_prices.append(
-            f"Current Price: {current_price}\n"
-            "---\n"
-        )
+        # If tokens are available, show their current prices
+        tokens = market_data.get('tokens', [])
+        if tokens:
+            for token in tokens:
+                outcome = token.get('outcome', 'Unknown')
+                price = token.get('price', 0)
+                try:
+                    price_float = float(price)
+                    formatted_prices.append(
+                        f"Outcome: {outcome}\n"
+                        f"Price: ${price_float:.4f}\n"
+                        f"Probability: {price_float * 100:.1f}%\n"
+                        "---\n"
+                    )
+                except (ValueError, TypeError):
+                    formatted_prices.append(
+                        f"Outcome: {outcome}\n"
+                        f"Price: {price}\n"
+                        "---\n"
+                    )
+        else:
+            # Fallback for markets without token data
+            formatted_prices.append("No price data available for this market\n")
         
         return "\n".join(formatted_prices)
     except Exception as e:
@@ -206,18 +258,14 @@ def format_market_history(history_data: dict) -> str:
         if not history_data or not isinstance(history_data, dict):
             return "No historical data available"
             
+        title = history_data.get('title', history_data.get('question', 'Unknown Market'))
         formatted_history = [
-            f"Historical Data for {history_data.get('title', 'Unknown Market')}\n"
+            f"Historical Data for {title}\n"
         ]
         
-        # Format historical data points
-        # Note: Adjust this based on actual CLOB client response structure
-        for point in history_data.get('history', [])[-5:]:
-            formatted_history.append(
-                f"Time: {point.get('timestamp', 'N/A')}\n"
-                f"Price: {point.get('price', 'N/A')}\n"
-                "---\n"
-            )
+        # Note: This is a placeholder as the Gamma API might not provide historical data
+        # You may need to use a different endpoint or the CLOB client for this
+        formatted_history.append("Historical data retrieval not yet implemented for Gamma API\n")
         
         return "\n".join(formatted_history)
     except Exception as e:
@@ -232,7 +280,7 @@ async def handle_call_tool(
     Tools can fetch prediction market data and notify clients of changes.
     """
     if not arguments:
-        return [types.TextContent(type="text", text="Missing arguments for the request")]
+        arguments = {}
     
     client = get_clob_client()
     
@@ -242,43 +290,89 @@ async def handle_call_tool(
             if not market_id:
                 return [types.TextContent(type="text", text="Missing market_id parameter")]
             
-            market_data = client.get_market(market_id)
-            formatted_info = format_market_info(market_data)
+            # Try to get from Gamma API first
+            params = {"id": market_id} if market_id.isdigit() else {"slug": market_id}
+            market_data = await fetch_gamma_markets(params)
+            
+            if market_data and isinstance(market_data, list) and len(market_data) > 0:
+                formatted_info = format_market_info(market_data[0])
+            else:
+                # Fallback to CLOB client
+                market_data = client.get_market(market_id)
+                formatted_info = format_market_info(market_data)
+                
             return [types.TextContent(type="text", text=formatted_info)]
 
         elif name == "list-markets":
-            status = arguments.get("status")
+            # Build parameters for Gamma API
+            params = {}
             
-            # Get markets using CLOB client
-            markets_data = client.get_markets()
-
-            # Handle string response (if the response is a JSON string)
-            if isinstance(markets_data, str):
-                try:
-                    markets_data = json.loads(markets_data)
-                except json.JSONDecodeError:
-                    return [types.TextContent(type="text", text="Error: Invalid response format from API")]
+            # Handle active/closed/archived filters
+            if arguments.get("active") is not None:
+                params["active"] = str(arguments.get("active")).lower()
+            else:
+                # Default to active markets if not specified
+                params["active"] = "true"
+                
+            if arguments.get("closed") is not None:
+                params["closed"] = str(arguments.get("closed")).lower()
+                
+            if arguments.get("archived") is not None:
+                params["archived"] = str(arguments.get("archived")).lower()
+            else:
+                # Default to excluding archived markets
+                params["archived"] = "false"
             
-            # Ensure we have a list of markets
-            if not isinstance(markets_data, list):
-                if isinstance(markets_data, dict) and 'data' in markets_data:
-                    markets_data = markets_data['data']
-                else:
-                    return [types.TextContent(type="text", text="Error: Unexpected response format from API")]
+            # Add pagination and ordering
+            params["limit"] = arguments.get("limit", 10)
+            params["offset"] = arguments.get("offset", 0)
+            params["order"] = arguments.get("order", "desc")
             
-            # Filter by status if specified
-            if status:
-                markets_data = [
-                    market for market in markets_data 
-                    if isinstance(market, dict) and market.get('status', '').lower() == status.lower()
-                ]
+            # Debug logging
+            print(f"[DEBUG] Final API params: {params}")
             
-            # Apply pagination
-            offset = arguments.get("offset", 0)
-            limit = arguments.get("limit", 10)
-            markets_data = markets_data[offset:offset + limit]
+            # Fetch from Gamma API
+            markets_data = await fetch_gamma_markets(params)
             
-            formatted_list = format_market_list(markets_data)
+            if markets_data is None:
+                # Fallback: try with minimal parameters
+                print("[DEBUG] Trying fallback with minimal parameters")
+                fallback_params = {
+                    "active": "true",
+                    "archived": "false",
+                    "limit": params["limit"]
+                }
+                markets_data = await fetch_gamma_markets(fallback_params)
+            
+            if markets_data is None:
+                # Final fallback to CLOB client
+                print("[DEBUG] Falling back to CLOB client")
+                markets_data = client.get_markets()
+                
+                # Handle string response
+                if isinstance(markets_data, str):
+                    try:
+                        markets_data = json.loads(markets_data)
+                    except json.JSONDecodeError:
+                        return [types.TextContent(type="text", text="Error: Invalid response format from API")]
+                
+                # Ensure we have a list
+                if not isinstance(markets_data, list):
+                    if isinstance(markets_data, dict) and 'data' in markets_data:
+                        markets_data = markets_data['data']
+                    else:
+                        return [types.TextContent(type="text", text="Error: Unexpected response format from API")]
+                
+                # Apply manual filtering for CLOB response
+                if arguments.get("active", True):
+                    markets_data = [m for m in markets_data if m.get('active', False)]
+                
+                # Apply pagination
+                offset = arguments.get("offset", 0)
+                limit = arguments.get("limit", 10)
+                markets_data = markets_data[offset:offset + limit]
+            
+            formatted_list = format_market_list(markets_data if isinstance(markets_data, list) else [])
             return [types.TextContent(type="text", text=formatted_list)]
 
         elif name == "get-market-prices":
@@ -286,8 +380,17 @@ async def handle_call_tool(
             if not market_id:
                 return [types.TextContent(type="text", text="Missing market_id parameter")]
             
-            market_data = client.get_market(market_id)
-            formatted_prices = format_market_prices(market_data)
+            # Try to get from Gamma API first
+            params = {"id": market_id} if market_id.isdigit() else {"slug": market_id}
+            market_data = await fetch_gamma_markets(params)
+            
+            if market_data and isinstance(market_data, list) and len(market_data) > 0:
+                formatted_prices = format_market_prices(market_data[0])
+            else:
+                # Fallback to CLOB client
+                market_data = client.get_market(market_id)
+                formatted_prices = format_market_prices(market_data)
+                
             return [types.TextContent(type="text", text=formatted_prices)]
 
         elif name == "get-market-history":
@@ -297,9 +400,18 @@ async def handle_call_tool(
             if not market_id:
                 return [types.TextContent(type="text", text="Missing market_id parameter")]
             
-            # Note: Adjust this based on actual CLOB client capabilities
-            market_data = client.get_market(market_id)
-            formatted_history = format_market_history(market_data)
+            # Note: Historical data might require a different endpoint
+            # For now, we'll use the market data as a placeholder
+            params = {"id": market_id} if market_id.isdigit() else {"slug": market_id}
+            market_data = await fetch_gamma_markets(params)
+            
+            if market_data and isinstance(market_data, list) and len(market_data) > 0:
+                formatted_history = format_market_history(market_data[0])
+            else:
+                # Fallback to CLOB client
+                market_data = client.get_market(market_id)
+                formatted_history = format_market_history(market_data)
+                
             return [types.TextContent(type="text", text=formatted_history)]
             
         else:
