@@ -311,9 +311,15 @@ async def fetch_gamma_markets(params: dict) -> list:
             
             response = await client.get(url, params=params, headers=headers)
             print(f"[DEBUG] Response status: {response.status_code}", file=sys.stderr)
+            print(f"[DEBUG] Response headers: {dict(response.headers)}", file=sys.stderr)
             
             if response.status_code == 200:
                 try:
+                    raw_content = response.text
+                    print(f"[DEBUG] Raw response length: {len(raw_content)} chars", file=sys.stderr)
+                    if len(raw_content) < 1000:
+                        print(f"[DEBUG] Raw response: {raw_content[:500]}...", file=sys.stderr)
+                    
                     data = response.json()
                     print(f"[DEBUG] Response data type: {type(data)}", file=sys.stderr)
                     
@@ -338,12 +344,16 @@ async def fetch_gamma_markets(params: dict) -> list:
                         markets = []
                     
                     print(f"[DEBUG] Number of markets: {len(markets)}", file=sys.stderr)
+                    if markets and len(markets) > 0:
+                        print(f"[DEBUG] First market sample: {json.dumps(markets[0], indent=2)[:500]}...", file=sys.stderr)
                     return markets
                 except json.JSONDecodeError as e:
                     print(f"[DEBUG] JSON decode error: {e}", file=sys.stderr)
+                    print(f"[DEBUG] Response text: {response.text[:500]}...", file=sys.stderr)
                     return []
             else:
                 print(f"[DEBUG] Error response status: {response.status_code}", file=sys.stderr)
+                print(f"[DEBUG] Error response text: {response.text[:500]}...", file=sys.stderr)
                 return []
         except httpx.TimeoutException:
             print(f"[DEBUG] Request timed out after {TIMEOUT_SECONDS} seconds", file=sys.stderr)
@@ -351,8 +361,13 @@ async def fetch_gamma_markets(params: dict) -> list:
         except httpx.NetworkError as e:
             print(f"[DEBUG] Network error: {type(e).__name__}: {str(e)}", file=sys.stderr)
             return []
+        except httpx.ConnectError as e:
+            print(f"[DEBUG] Connection error - unable to reach {GAMMA_API_URL}: {str(e)}", file=sys.stderr)
+            return []
         except Exception as e:
             print(f"[DEBUG] Unexpected error in fetch_gamma_markets: {type(e).__name__}: {str(e)}", file=sys.stderr)
+            import traceback
+            print(f"[DEBUG] Traceback: {traceback.format_exc()}", file=sys.stderr)
             return []
 
 async def fetch_gamma_market(market_id: str) -> dict:
@@ -389,6 +404,33 @@ async def fetch_gamma_market(market_id: str) -> dict:
         except Exception as e:
             print(f"[DEBUG] Error fetching market: {type(e).__name__}: {str(e)}", file=sys.stderr)
             return {}
+
+async def test_gamma_api_connectivity():
+    """Test if Gamma API is reachable"""
+    print("[DEBUG] Testing Gamma API connectivity...", file=sys.stderr)
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        try:
+            response = await client.get(f"{GAMMA_API_URL}/markets?limit=1")
+            if response.status_code == 200:
+                print(f"[DEBUG] ✅ Gamma API is reachable! Status: {response.status_code}", file=sys.stderr)
+                try:
+                    data = response.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        print(f"[DEBUG] ✅ API returned valid data. Sample market:", file=sys.stderr)
+                        print(f"[DEBUG]    ID: {data[0].get('id', 'N/A')}", file=sys.stderr)
+                        print(f"[DEBUG]    Title: {data[0].get('title', data[0].get('question', 'N/A'))}", file=sys.stderr)
+                        print(f"[DEBUG]    Active: {data[0].get('active', 'N/A')}", file=sys.stderr)
+                        print(f"[DEBUG]    Archived: {data[0].get('archived', 'N/A')}", file=sys.stderr)
+                except:
+                    print(f"[DEBUG] ⚠️  API reachable but response format unexpected", file=sys.stderr)
+            else:
+                print(f"[DEBUG] ❌ Gamma API returned error status: {response.status_code}", file=sys.stderr)
+        except httpx.ConnectError as e:
+            print(f"[DEBUG] ❌ Cannot connect to Gamma API: {str(e)}", file=sys.stderr)
+        except httpx.TimeoutException:
+            print(f"[DEBUG] ❌ Gamma API connection timed out", file=sys.stderr)
+        except Exception as e:
+            print(f"[DEBUG] ❌ Unexpected error testing Gamma API: {type(e).__name__}: {str(e)}", file=sys.stderr)
 
 @server.call_tool()
 async def handle_call_tool(
@@ -447,6 +489,7 @@ async def handle_call_tool(
                 # Handle sorting
                 params["order"] = arguments.get("order", "desc")
                 
+                print(f"[DEBUG] Attempting to fetch from Gamma API...", file=sys.stderr)
                 markets_data = await fetch_gamma_markets(params)
                 
                 if not markets_data:
@@ -460,13 +503,63 @@ async def handle_call_tool(
                     markets_data = await fetch_gamma_markets(minimal_params)
                 
                 if not markets_data:
-                    return [types.TextContent(
-                        type="text", 
-                        text="Unable to fetch markets. The API may be temporarily unavailable or rate limited.\n\n"
-                             "Please try again in a moment."
-                    )]
+                    print(f"[DEBUG] Gamma API failed, falling back to CLOB client", file=sys.stderr)
+                    print(f"[DEBUG] ⚠️  WARNING: CLOB client may return outdated markets!", file=sys.stderr)
+                    
+                    # Final fallback to CLOB client
+                    try:
+                        client = get_clob_client()
+                        if client:
+                            markets_data = client.get_markets()
+                            print(f"[DEBUG] CLOB client returned data type: {type(markets_data)}", file=sys.stderr)
+                            
+                            # Handle string response
+                            if isinstance(markets_data, str):
+                                try:
+                                    markets_data = json.loads(markets_data)
+                                except json.JSONDecodeError:
+                                    return [types.TextContent(type="text", text="Error: Invalid response format from API")]
+                            
+                            # Ensure we have a list
+                            if not isinstance(markets_data, list):
+                                if isinstance(markets_data, dict) and 'data' in markets_data:
+                                    markets_data = markets_data['data']
+                                else:
+                                    return [types.TextContent(type="text", text="Error: Unexpected response format from API")]
+                            
+                            # Apply manual filtering for CLOB response
+                            if arguments.get("active", True):
+                                markets_data = [m for m in markets_data if m.get('active', False)]
+                            
+                            # Apply pagination
+                            offset = arguments.get("offset", 0)
+                            limit = arguments.get("limit", 10)
+                            markets_data = markets_data[offset:offset + limit]
+                            
+                            # Add warning to output
+                            warning = "⚠️  WARNING: Showing cached data from CLOB client. These markets may be outdated.\n\n"
+                        else:
+                            return [types.TextContent(
+                                type="text", 
+                                text="Unable to fetch markets. Both Gamma API and CLOB client are unavailable.\n\n"
+                                     "Please check:\n"
+                                     "1. Your internet connection\n"
+                                     "2. If Polymarket APIs are accessible from your location\n"
+                                     "3. Your API credentials in the .env file"
+                            )]
+                    except Exception as e:
+                        print(f"[DEBUG] CLOB fallback failed: {str(e)}", file=sys.stderr)
+                        return [types.TextContent(
+                            type="text", 
+                            text=f"Error: Unable to fetch markets from any source.\n\n{str(e)}"
+                        )]
+                else:
+                    print(f"[DEBUG] Successfully fetched {len(markets_data)} markets from Gamma API", file=sys.stderr)
+                    warning = ""
                 
-                formatted_list = format_market_list(markets_data)
+                formatted_list = format_market_list(markets_data if isinstance(markets_data, list) else [])
+                if warning:
+                    formatted_list = warning + formatted_list
                 return [types.TextContent(type="text", text=formatted_list)]
 
             elif name == "get-market-prices":
@@ -520,6 +613,9 @@ async def main():
     print("[DEBUG] Starting polymarket-mcp server v0.2.0", file=sys.stderr)
     print(f"[DEBUG] Gamma API URL: {GAMMA_API_URL}", file=sys.stderr)
     print(f"[DEBUG] Timeout: {TIMEOUT_SECONDS} seconds", file=sys.stderr)
+    
+    # Test Gamma API connectivity
+    await test_gamma_api_connectivity()
     
     # Initialize CLOB client early to catch any stdout output
     print("[DEBUG] Initializing CLOB client...", file=sys.stderr)
