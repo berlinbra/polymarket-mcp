@@ -13,10 +13,13 @@ A Model Context Protocol (MCP) server that provides access to prediction market 
 ## Features
 
 - Real-time prediction market data with current prices and probabilities
+- Integration with PolyMarket's Gamma API for up-to-date market listings
+- Proper filtering to exclude outdated/archived markets
 - Detailed market information including categories, resolution dates, and descriptions
 - Historical price and volume data with customizable timeframes (1d, 7d, 30d, all)
 - Built-in error handling and rate limit management
 - Clean data formatting for easy consumption
+- Automatic fallback to CLOB API when Gamma API is unavailable
 
 ## Installation
 
@@ -99,20 +102,18 @@ The server implements four tools:
 {
     "market_id": {
         "type": "string",
-        "description": "Market ID or slug"
+        "description": "Market ID (numeric ID or slug, e.g. '12' or 'will-bitcoin-reach-100k')"
     }
 }
 ```
 
 **Example Response:**
 ```
-Title: Example Market
-Category: Politics
-Status: Open
-Resolution Date: 2024-12-31
+Condition ID: 0x123...
+Title: Will Bitcoin reach $100,000 by December 2025?
+Status: Active
+End Date: 2025-12-31T23:59:59Z
 Volume: $1,234,567.89
-Liquidity: $98,765.43
-Description: This is an example prediction market...
 ---
 ```
 
@@ -121,10 +122,20 @@ Description: This is an example prediction market...
 **Input Schema:**
 ```json
 {
-    "status": {
-        "type": "string",
-        "description": "Filter by market status",
-        "enum": ["open", "closed", "resolved"]
+    "active": {
+        "type": "boolean",
+        "description": "Filter by active markets",
+        "default": true
+    },
+    "closed": {
+        "type": "boolean",
+        "description": "Filter by closed markets",
+        "default": false
+    },
+    "archived": {
+        "type": "boolean",
+        "description": "Filter by archived markets (set to false to exclude old markets)",
+        "default": false
     },
     "limit": {
         "type": "integer",
@@ -138,6 +149,12 @@ Description: This is an example prediction market...
         "description": "Number of markets to skip (for pagination)",
         "default": 0,
         "minimum": 0
+    },
+    "order": {
+        "type": "string",
+        "description": "Sort order",
+        "enum": ["asc", "desc"],
+        "default": "desc"
     }
 }
 ```
@@ -146,16 +163,22 @@ Description: This is an example prediction market...
 ```
 Available Markets:
 
-ID: market-123
+Condition ID: 0x456...
 Title: US Presidential Election 2024
-Status: Open
+Status: Active
+Category: Politics
 Volume: $1,234,567.89
+End Date: 2024-11-05T23:59:59Z
+Slug: us-presidential-election-2024
 ---
 
-ID: market-124
-Title: Oscar Best Picture 2024
-Status: Open
+Condition ID: 0x789...
+Title: Will AI achieve AGI by 2030?
+Status: Active
+Category: Technology
 Volume: $234,567.89
+End Date: 2030-12-31T23:59:59Z
+Slug: will-ai-achieve-agi-by-2030
 ---
 ```
 
@@ -166,7 +189,7 @@ Volume: $234,567.89
 {
     "market_id": {
         "type": "string",
-        "description": "Market ID or slug"
+        "description": "Market ID (numeric ID or slug)"
     }
 }
 ```
@@ -193,7 +216,7 @@ Probability: 35.0%
 {
     "market_id": {
         "type": "string",
-        "description": "Market ID or slug"
+        "description": "Market ID (numeric ID or slug)"
     },
     "timeframe": {
         "type": "string",
@@ -207,18 +230,17 @@ Probability: 35.0%
 **Example Response:**
 ```
 Historical Data for US Presidential Election 2024
-Time Period: 7d
 
-Time: 2024-01-20T12:00:00Z
-Price: $0.6500
-Volume: $123,456.78
----
-
-Time: 2024-01-19T12:00:00Z
-Price: $0.6300
-Volume: $98,765.43
----
+Historical data retrieval not yet implemented for Gamma API
 ```
+
+## API Integration
+
+This server now uses two PolyMarket APIs:
+1. **Gamma API** (`https://gamma-api.polymarket.com`) - Primary API for fetching current market listings
+2. **CLOB API** (`https://clob.polymarket.com`) - Fallback API and for authenticated operations
+
+The server automatically excludes archived markets by default to ensure you only see current, relevant prediction markets.
 
 ## Error Handling
 
@@ -230,6 +252,7 @@ The server includes comprehensive error handling for various scenarios:
 - Network connectivity issues
 - API timeout conditions (30-second timeout)
 - Malformed responses
+- Automatic fallback to CLOB API when Gamma API is unavailable
 
 Error messages are returned in a clear, human-readable format.
 
@@ -239,6 +262,7 @@ Error messages are returned in a clear, human-readable format.
 - httpx>=0.24.0
 - mcp-core
 - python-dotenv>=1.0.0
+- py-clob-client
 
 ## Contributing
 
